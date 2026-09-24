@@ -58,6 +58,13 @@ function sameTab(left: AffinityTab | null, right: AffinityTab | null): boolean {
 export class TabAffinityController {
   private controlled: AffinityTab | null = null
   private active: AffinityTab | null = null
+  /**
+   * Sessions whose bound tab is known to be gone (closed while tracked, or
+   * pruned at restore). Only these fail closed as `lost` when focused; a
+   * session this worker has never bound is simply unbound and gets the
+   * active tab on its next activation, exactly like a new session.
+   */
+  private readonly lostSessions = new Set<string>()
   private keptActiveTabId: number | null = null
   private pinned = false
   private hasBound = false
@@ -99,6 +106,19 @@ export class TabAffinityController {
     this.focusedSessionId = sessionId
   }
 
+  /** Record that a session's tab was pruned at restore, so focusing it fails closed. */
+  markSessionLost(sessionId: string): void {
+    const sid = sessionId.trim()
+    if (sid === '') return
+    this.sessionTabs.delete(sid)
+    this.lostSessions.add(sid)
+  }
+
+  /** Whether the named session's tab is known to be gone. */
+  isSessionLost(sessionId: string): boolean {
+    return this.lostSessions.has(sessionId)
+  }
+
   getSessionTab(sessionId: string): AffinityTab | undefined {
     return this.sessionTabs.get(sessionId)
   }
@@ -121,7 +141,9 @@ export class TabAffinityController {
       this.keptActiveTabId = null
       this.pinned = false
       this.hasBound = true
-      this.lost = true
+      // Fail closed only for a tab that actually went away; a session never
+      // bound in this worker is unbound until its activation binds it.
+      this.lost = this.lostSessions.has(sessionId)
     } else {
       this.controlled = { ...tab }
       this.hasBound = true
@@ -179,6 +201,7 @@ export class TabAffinityController {
     const sid = sessionId?.trim()
     if (sid !== undefined && sid !== '') {
       if (this.sessionTabs.has(sid)) return false
+      this.lostSessions.delete(sid)
       this.sessionTabs.set(sid, { ...tab })
       if (this.focusedSessionId === null) this.focusedSessionId = sid
       if (this.focusedSessionId === sid) {
@@ -206,6 +229,7 @@ export class TabAffinityController {
   bindNewSession(sessionId: string, tab: AffinityTab): boolean {
     const sid = sessionId.trim()
     if (sid === '') return false
+    this.lostSessions.delete(sid)
     const previous = this.sessionTabs.get(sid)
     this.sessionTabs.set(sid, { ...tab })
     this.focusedSessionId = sid
@@ -229,6 +253,7 @@ export class TabAffinityController {
     this.hasBound = true
     this.lost = false
     if (sid !== undefined && sid !== '') {
+      this.lostSessions.delete(sid)
       this.sessionTabs.set(sid, { ...tab })
       this.focusedSessionId = sid
     }
@@ -247,6 +272,7 @@ export class TabAffinityController {
     this.hasBound = true
     this.lost = false
     if (sid !== undefined && sid !== '') {
+      this.lostSessions.delete(sid)
       this.sessionTabs.set(sid, { ...tab })
       this.focusedSessionId = sid
     }
@@ -299,6 +325,7 @@ export class TabAffinityController {
     for (const [sid, sTab] of this.sessionTabs.entries()) {
       if (sTab.tabId === tabId) {
         this.sessionTabs.delete(sid)
+        this.lostSessions.add(sid)
         if (this.focusedSessionId === sid) this.focusedSessionId = null
         sessionRemoved = true
       }

@@ -634,6 +634,33 @@ async function syncActiveTab(windowId?: number, signal?: AbortSignal): Promise<c
   }
 }
 
+/**
+ * The active tab of the window a panel lives in, for binding a session.
+ * Unlike syncActiveTab this does not go through the focused-window revision
+ * gate: a concurrent focus change or query must not turn a binding into a
+ * silent no-op. The observed tab still feeds the tracker so the panel's view
+ * stays consistent.
+ */
+async function activeTabForPanel(port: chrome.runtime.Port): Promise<AffinityTab | null> {
+  const windowId = panelWindows.get(port)
+  const queries: chrome.tabs.QueryInfo[] = windowId === undefined
+    ? [{ active: true, lastFocusedWindow: true }, { active: true, currentWindow: true }]
+    : [{ active: true, windowId }, { active: true, lastFocusedWindow: true }]
+  for (const query of queries) {
+    try {
+      const [tab] = await chrome.tabs.query(query)
+      const summary = tab === undefined ? null : summarizeTab(tab)
+      if (summary === null) continue
+      focusedWindow.markFocused(summary.windowId)
+      observeActiveSummary(summary)
+      return summary
+    } catch {
+      // Try the next query shape.
+    }
+  }
+  return null
+}
+
 async function restoreTabAffinity(): Promise<void> {
   let record: StoredTabAffinity | null = null
   try {
@@ -676,8 +703,10 @@ async function restoreTabAffinity(): Promise<void> {
       try {
         const live = summarizeTab(await chrome.tabs.get(storedTab.tabId))
         if (live !== null) restoredSessions[sid] = live
+        else tabAffinity.markSessionLost(sid)
       } catch {
         // Closed tabs are deliberately pruned so the session fails closed.
+        tabAffinity.markSessionLost(sid)
       }
     }
     tabAffinity.restoreSessionTabs(restoredSessions)
@@ -1473,10 +1502,15 @@ chrome.runtime.onConnect.addListener((port) => {
           panelActiveSessions.delete(port)
         } else {
           panelActiveSessions.set(port, sid)
-          if (session.isNew === true) {
+          // A session this worker has never bound (new, or created while a
+          // previous bind attempt lost the active-tab race) is bound to the
+          // panel's active tab now; only a session whose tab is known to be
+          // gone stays fail-closed.
+          const needsBind = session.isNew === true
+            || (tabAffinity.getSessionTab(sid) === undefined && !tabAffinity.isSessionLost(sid))
+          if (needsBind) {
             const bind = Promise.all([affinityReady, pageSessionContexts.ready]).then(async () => {
-              const tab = await syncActiveTab()
-              const summary = tab === undefined ? null : summarizeTab(tab)
+              const summary = await activeTabForPanel(port)
               if (summary === null) throw new Error('No active tab is available to bind this session')
               if (tabAffinity.getSessionTab(sid) === undefined) tabAffinity.bindNewSession(sid, summary)
               pageSessionContexts.bind(sid, { id: summary.tabId, ...summary })

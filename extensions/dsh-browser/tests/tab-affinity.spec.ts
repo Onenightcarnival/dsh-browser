@@ -328,3 +328,45 @@ describe('TabAffinityController', () => {
     expect(restoredAffinity.allowsTarget(2, 'session-missing')).toBe(false)
   })
 })
+
+describe('never-bound sessions versus sessions whose tab went away', () => {
+  it('focusing a session this worker never bound leaves it unbound, not lost', () => {
+    const affinity = new TabAffinityController()
+    affinity.observeActive(tab(1))
+    expect(affinity.focusSession('fresh')).toBe(true)
+    expect(affinity.snapshot()).toMatchObject({ status: 'unbound', controlled: null })
+    expect(affinity.isSessionLost('fresh')).toBe(false)
+    // Its activation then binds it like a new session would.
+    expect(affinity.bindNewSession('fresh', tab(1))).toBe(true)
+    expect(affinity.snapshot()).toMatchObject({ status: 'following', controlled: { tabId: 1 } })
+  })
+
+  it('still fails closed for a session whose tab closed while tracked', () => {
+    const affinity = new TabAffinityController()
+    affinity.observeActive(tab(1))
+    affinity.bindNewSession('s1', tab(1))
+    affinity.observeActive(tab(2))
+    expect(affinity.removeTab(1)).toBe(true)
+    expect(affinity.isSessionLost('s1')).toBe(true)
+    affinity.bindNewSession('s2', tab(2))
+    affinity.focusSession('s1')
+    expect(affinity.snapshot()).toMatchObject({ status: 'lost', controlled: null })
+    // An explicit rebind clears the mark.
+    expect(affinity.rebindActive(tab(2), 's1')).toBe(true)
+    expect(affinity.isSessionLost('s1')).toBe(false)
+    expect(affinity.snapshot()).toMatchObject({ status: 'following', controlled: { tabId: 2 } })
+  })
+
+  it('fails closed for a session pruned at restore and recovers once bound again', () => {
+    const affinity = new TabAffinityController()
+    affinity.markSessionLost('pruned')
+    affinity.restoreSessionTabs({ alive: tab(3) })
+    affinity.observeActive(tab(3))
+    affinity.focusSession('pruned')
+    expect(affinity.snapshot().status).toBe('lost')
+    expect(affinity.resolveTarget('pruned')).toEqual({ kind: 'lost' })
+    expect(affinity.bindInitial(tab(3), 'pruned')).toBe(true)
+    expect(affinity.isSessionLost('pruned')).toBe(false)
+    expect(affinity.resolveTarget('pruned')).toEqual({ kind: 'target', tab: tab(3) })
+  })
+})
