@@ -5,7 +5,7 @@
 # No further configuration is required: the extension discovers local dsh automatically and loopback connections require no token.
 set -euo pipefail
 
-REPOSITORY="Lum1104/dsh-browser"
+REPOSITORY="Onenightcarnival/dsh-browser"
 REMOTE_REF="main"
 DSH_HOME_DIR="${DSH_HOME:-$HOME/.dsh}"
 MANAGED_ROOT="$DSH_HOME_DIR/dsh-browser"
@@ -420,4 +420,4 @@ printf '• 启动固定版本：cd %q && pnpm start\n' "$ROOT"
 printf '   Start the pinned version: cd %q && pnpm start\n' "$ROOT"
 print_pair "• 或直接启动固定版本：npx @deepseek-ai/dsh@0.1.5-rc.2 web" "Or start the pinned version directly: npx @deepseek-ai/dsh@0.1.5-rc.2 web"
 printf '\n'
-print_pair "如果用得顺手，欢迎在 GitHub 点个 Star 支持我们：https://github.com/Lum1104/dsh-browser" "If dsh-browser is useful to you, we'd appreciate a Star on GitHub: https://github.com/Lum1104/dsh-browser"
+print_pair "如果用得顺手，欢迎在 GitHub 点个 Star 支持我们：https://github.com/Onenightcarnival/dsh-browser" "If dsh-browser is useful to you, we'd appreciate a Star on GitHub: https://github.com/Onenightcarnival/dsh-browser"

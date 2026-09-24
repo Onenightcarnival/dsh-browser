@@ -1,4 +1,4 @@
-# dsh 浏览器操作 [![dshfind](https://dshfind.com/api/badge/Lum1104/dsh-browser?lang=zh)](https://dshfind.com/zh/plugins/Lum1104/dsh-browser?ref=badge)
+# dsh 浏览器操作
 
 [English](README.md) | **中文**
 
@@ -7,6 +7,8 @@
 把 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 连接到你正在使用的 Chrome 或 Firefox 标签页。模型可以读取页面内容、操作控件、导航和管理标签页，同时保留登录态、会话和 Cookie。侧边栏提供对话界面。
 
 `dsh` 是由 DeepSeek AI 开发的开源、插件化 agent harness（智能体框架）。本仓库将配套的浏览器桥插件与 Chrome/Firefox MV3 扩展组成一个独立的 pnpm workspace。
+
+本仓库是 [Lum1104/dsh-browser](https://github.com/Lum1104/dsh-browser) 的分支，面向 [DeepSeek Harness Desktop](https://github.com/Onenightcarnival/deepseek-harness-desktop) 桌面版：桥插件改用 `@onenightcarnival` scope 发布，并带一个固定端口的发现信标，让随机端口启动的桌面版也能被扩展找到；发布页提供可直接从桌面版配置中心安装的 `.tgz` 与扩展 zip。安装方法见[在 DeepSeek Harness Desktop 中使用](#在-deepseek-harness-desktop-中使用)。
 
 浏览器操作仍采用纯文本设计：页面会转换为结构化文本和带编号的交互元素清单，模型通过编号定位元素。dsh 0.1.5 的多模态对话走独立通道——宿主声明图片能力时，侧栏可发送 PNG、JPEG、WebP 和 GIF；浏览器工具本身仍不会截取页面截图。
 
@@ -20,19 +22,32 @@
 macOS 与 Linux：
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Lum1104/dsh-browser/refs/heads/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Onenightcarnival/dsh-browser/refs/heads/main/scripts/install.sh | bash
 ```
 
 Windows（PowerShell）：
 
 ```powershell
-$s="$env:TEMP\dsh-install.ps1"; irm https://raw.githubusercontent.com/Lum1104/dsh-browser/refs/heads/main/scripts/install.ps1 -OutFile $s; powershell -NoProfile -ExecutionPolicy Bypass -File $s
+$s="$env:TEMP\dsh-install.ps1"; irm https://raw.githubusercontent.com/Onenightcarnival/dsh-browser/refs/heads/main/scripts/install.ps1 -OutFile $s; powershell -NoProfile -ExecutionPolicy Bypass -File $s
 ```
 
 安装器打开 `chrome://extensions` 后，请按提示加载或重新加载 **dsh 浏览器助手**。如果 dsh 已经在运行，安装完成后请重启。前置要求、启动命令、更新方式和开发者安装详见[详细安装与使用](#详细安装与使用)。
 
 > [!IMPORTANT]
-> npm 上未加 scope 的 [`dsh-browser`](https://www.npmjs.com/package/dsh-browser) 包属于另一个项目，与本仓库无关。本项目目前没有发布 npm 包，请使用上方安装器。
+> npm 上未加 scope 的 [`dsh-browser`](https://www.npmjs.com/package/dsh-browser) 包属于另一个项目，与本仓库无关。命令行用户请使用上方安装器；桌面版用户见下一节。
+
+## 在 DeepSeek Harness Desktop 中使用
+
+桌面版把 dsh 服务跑在随机端口上，扩展靠固定端口找不到它。本分支的桥插件在启动时另开一个只回 `/ext/bridge-config` 的回环信标（默认 `127.0.0.1:43189`，被占时顺延到 43192，配置 `discoveryPort: 0` 关闭），把真实的桥地址告诉扩展，桌面版代码不需要任何改动。
+
+1. 到 [Releases](https://github.com/Onenightcarnival/dsh-browser/releases) 下载 `onenightcarnival-dsh-bridge-browser-<版本>.tgz` 和 `dsh-browser-extension-chrome-<版本>.zip`。也可以在源码 checkout 里 `pnpm install && pnpm run build && pnpm run package:desktop`，产物在 `dist-desktop/`。
+2. 打开桌面版菜单「插件 → 配置中心… → 插件」，点「从 .tgz 安装」，选中下载的 `.tgz`。桌面版会执行 `dsh plugin --profile web add file:<路径>`，安装 `ws` 等依赖并注册桥插件的 `dsh.bundle` 组合层。按提示重启桌面版。
+3. 把 zip 解压到一个不会删的目录，打开 `chrome://extensions`，开启「开发者模式」，点「加载已解压的扩展程序」选中该目录。
+4. 打开任意网页，点击 DeepSeek 鲸鱼图标打开侧边栏，等待显示**已连接**。扩展创建的会话默认落在 `~/.dsh/browser-sessions` 工作区，也会出现在桌面版的会话列表里。
+
+桌面版内核升级到新版本线后，桥插件需要同步适配上游后重新安装；本分支钉在 dsh 0.1.5-rc.2，与桌面版当前内置版本一致。
+
+**排查**：桌面版运行时，浏览器打开 `http://127.0.0.1:43189/ext/bridge-config` 应返回 `{"wsUrl":"ws://127.0.0.1:<随机端口>/ext/bridge"}`。返回不了说明桥插件没装进 web profile（配置中心插件列表里应有 `@onenightcarnival/dsh-bridge-browser`）或桌面版没有重启；43189 被别的程序占用时看桌面版日志里 `discovery beacon listening on` 报告的实际端口，或在扩展设置里手动填写地址。
 
 ## 性能基准
 
@@ -90,13 +105,13 @@ scripts/install.ps1
 托管安装请运行：
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Lum1104/dsh-browser/refs/heads/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Onenightcarnival/dsh-browser/refs/heads/main/scripts/install.sh | bash
 ```
 
 Windows 请运行：
 
 ```powershell
-$s="$env:TEMP\dsh-install.ps1"; irm https://raw.githubusercontent.com/Lum1104/dsh-browser/refs/heads/main/scripts/install.ps1 -OutFile $s; powershell -NoProfile -ExecutionPolicy Bypass -File $s
+$s="$env:TEMP\dsh-install.ps1"; irm https://raw.githubusercontent.com/Onenightcarnival/dsh-browser/refs/heads/main/scripts/install.ps1 -OutFile $s; powershell -NoProfile -ExecutionPolicy Bypass -File $s
 ```
 
 安装器会下载 `main`、构建并注册桥插件、把 Chrome 扩展构建到 `~/.dsh/browser-extension`，然后打开 `chrome://extensions`。首次安装时，请把该目录作为已解压扩展加载；更新时点击**重新加载**。如果 dsh 已在运行，请重启。
@@ -108,7 +123,7 @@ Windows 命令先下载 `install.ps1` 再执行，而不是管道给 `Invoke-Exp
 如需从源码 checkout 安装当前分支：
 
 ```sh
-git clone https://github.com/Lum1104/dsh-browser.git
+git clone https://github.com/Onenightcarnival/dsh-browser.git
 cd dsh-browser
 ./scripts/install.sh
 ```
@@ -148,7 +163,7 @@ Chrome 本机使用无需配置；Firefox 需要填写上述本地桥 token。�
 
 - 确认本机 dsh web 正在运行（默认 `http://127.0.0.1:3080`）。
 - 确认桥接已加载：浏览器打开 `http://127.0.0.1:3080/ext/bridge-config`，应返回类似 `{"wsUrl":"ws://127.0.0.1:3080/ext/bridge"}` 的 JSON。如果返回的是网页而不是 JSON，说明当前运行的 dsh 早于桥接注册——重启 dsh 并刷新页面即可，扩展会自动重连。
-- 扩展会自动探测 3080/3081/3090/14389 端口。若 dsh 运行在其它端口，或使用 `--host 0.0.0.0` 远程部署，请在面板设置中填写地址与桥接 token。Firefox 始终需要 token。
+- 扩展会自动探测 3080/3081/3090 端口、发现信标窗口 43189–43192，以及旧版桌面端口 14389。若 dsh 运行在其它端口且关闭了信标，或使用 `--host 0.0.0.0` 远程部署，请在面板设置中填写地址与桥接 token。Firefox 始终需要 token。
 
 ## 开发
 
@@ -160,6 +175,7 @@ pnpm run typecheck
 pnpm run test
 pnpm run check:runtime
 pnpm run test:smoke
+pnpm run package:desktop   # dist-desktop/：桥插件 .tgz、Chrome 扩展 zip、SHA256SUMS.txt
 
 pnpm --filter @onenightcarnival/dsh-bridge-browser run build
 pnpm --filter @onenightcarnival/dsh-bridge-browser run typecheck

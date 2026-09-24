@@ -8,6 +8,7 @@ import { dirname, join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { randomUUID } from 'node:crypto'
+import { createServer } from 'node:net'
 import { zstdCompressSync } from 'node:zlib'
 
 const root = fileURLToPath(new URL('../', import.meta.url))
@@ -40,6 +41,16 @@ const legacyLog = [
 // The JSONL container requires its header in a separate Zstandard frame.
 const legacyBytes = Buffer.concat(legacyLog.trimEnd().split('\n').map(line => zstdCompressSync(Buffer.from(line + '\n'))))
 const token = randomUUID()
+// The discovery beacon normally sits on 43189; the smoke picks a free port so
+// it never collides with a developer's running desktop app or CLI host.
+const discoveryPort = await new Promise((resolve, reject) => {
+  const probe = createServer()
+  probe.once('error', reject)
+  probe.listen(0, '127.0.0.1', () => {
+    const { port } = probe.address()
+    probe.close(() => resolve(port))
+  })
+})
 const env = { ...process.env, DSH_HOME: home, DSH_TELEMETRY_DISABLED: '1' }
 // Do not inherit bridge settings or credentials from the developer's shell.
 delete env.DSH_EXT_TOKEN
@@ -84,6 +95,7 @@ async function start(reopen) {
     `    token: ${JSON.stringify(token)}`,
     '    sessionWorkspacePath: ""',
     '    deferSessionCreate: false',
+    `    discoveryPort: ${discoveryPort}`,
     '- insert:',
     '    - id: runtime-smoke-probe',
     `      name: ${JSON.stringify(pathToFileURL(join(root, 'scripts/fixtures/runtime-probe.mjs')).href)}`,
@@ -109,6 +121,18 @@ async function start(reopen) {
   assert.equal(response.status, 200)
   const config = await response.json()
   assert.equal(config.wsUrl, base.replace('http:', 'ws:') + '/ext/bridge')
+  // Random-port hosts (the desktop app runs `dsh web --port 0`) are found
+  // through the fixed-port discovery beacon, which must report the same URL.
+  const beacon = await waitFor(async () => {
+    try {
+      const reply = await fetch(`http://127.0.0.1:${discoveryPort}/ext/bridge-config`, { signal: AbortSignal.timeout(2_000) })
+      return reply.status === 200 ? await reply.json() : undefined
+    } catch { return undefined }
+  }, 'discovery beacon', 15_000)
+  assert.equal(beacon.wsUrl, config.wsUrl, 'beacon must advertise the host bridge URL')
+  const beaconOther = await fetch(`http://127.0.0.1:${discoveryPort}/ext/bridge`, { signal: AbortSignal.timeout(2_000) })
+  assert.equal(beaconOther.status, 404, 'beacon must serve nothing but the config route')
+  console.log(`Discovery beacon on 127.0.0.1:${discoveryPort} -> ${beacon.wsUrl}`)
   // Inspect what the actual profile Loader resolves, not just workspace hoists.
   const resolve = createRequire(join(home, 'profiles/web/package.json'))
   for (const name of ['dsh-session-query', 'dsh-session-projection-cache']) {

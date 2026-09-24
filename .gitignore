@@ -8,3 +8,6 @@ node_modules/
 
 # test artifacts
 **/coverage/
+
+# desktop release artifacts
+dist-desktop/

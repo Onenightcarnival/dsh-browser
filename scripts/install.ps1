@@ -23,7 +23,7 @@ $ProgressPreference = 'SilentlyContinue'
 # message into question marks on a non-Chinese install.
 try { [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false } catch { }
 
-$Repository = 'Lum1104/dsh-browser'
+$Repository = 'Onenightcarnival/dsh-browser'
 $RemoteRef = 'main'
 $DshHomeDir = if ($env:DSH_HOME) { $env:DSH_HOME } else { Join-Path $HOME '.dsh' }
 $ManagedRoot = Join-Path $DshHomeDir 'dsh-browser'
@@ -515,4 +515,4 @@ Write-Host ("• 启动固定版本：cd {0}; pnpm start" -f $QuotedRoot)
 Write-Host ("   Start the pinned version: cd {0}; pnpm start" -f $QuotedRoot)
 Write-Pair "• 或直接启动固定版本：npx @deepseek-ai/dsh@0.1.5-rc.2 web" "Or start the pinned version directly: npx @deepseek-ai/dsh@0.1.5-rc.2 web"
 Write-Host ''
-Write-Pair "如果用得顺手，欢迎在 GitHub 点个 Star 支持我们：https://github.com/Lum1104/dsh-browser" "If dsh-browser is useful to you, we'd appreciate a Star on GitHub: https://github.com/Lum1104/dsh-browser"
+Write-Pair "如果用得顺手，欢迎在 GitHub 点个 Star 支持我们：https://github.com/Onenightcarnival/dsh-browser" "If dsh-browser is useful to you, we'd appreciate a Star on GitHub: https://github.com/Onenightcarnival/dsh-browser"
