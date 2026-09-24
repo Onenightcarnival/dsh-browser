@@ -83,9 +83,8 @@ export interface Config {
   /** Defer real session creation until the first prompt. Defaults to true. */
   deferSessionCreate?: boolean
   /**
-   * Loopback port of the discovery beacon that answers `/ext/bridge-config`
-   * for hosts on a random web port (DeepSeek Harness Desktop). Defaults to
-   * 43189; falls back through the next three ports when taken; 0 disables.
+   * Discovery beacon port: loopback `/ext/bridge-config` for hosts on a random web port.
+   * Defaults to 43189, falls back through the next three ports; 0 disables.
    */
   discoveryPort?: number
 }
@@ -243,10 +242,8 @@ function mountBridge(
   // 异步 disposer：HMR/卸载时先等桥完全关闭（socket/泵/acceptor 静默）再继续。
   ctx.effect(() => () => server.close(), 'bridge-browser: bridge server')
 
-  // Zero-config discovery endpoint: the extension fetches this to learn the
-  // bridge WebSocket URL without any manual configuration. The URL carries no
-  // secret (loopback connections skip the token); non-loopback deployments
-  // keep requiring the token on the WS itself.
+  // /ext/bridge-config on the host port: the extension's zero-config discovery route.
+  // The URL carries no secret; remote clients still present the token on the WS itself.
   const configRoute: WebRoute = {
     kind: 'exact',
     path: BRIDGE_CONFIG_PATH,
@@ -257,9 +254,8 @@ function mountBridge(
   }
   ctx.effect(() => ctx.webServer.register(configRoute), 'bridge-browser: /ext/bridge-config route')
 
-  // Well-known-port beacon for hosts whose web port is random (the desktop
-  // app starts `dsh web --port 0`). Same payload as the route above; the host
-  // port itself is skipped because the route already serves it there.
+  // Same payload on the fixed-port beacon, for hosts whose web port is random
+  // (`dsh web --port 0`). The host port is skipped: the route above serves it.
   if (resolved.discoveryPort > 0) {
     ctx.effect(() => {
       const beacon = startDiscoveryBeacon({

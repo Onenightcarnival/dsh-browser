@@ -1,18 +1,18 @@
 /**
- * Discovery beacon: a loopback-only HTTP listener on a well-known port that
- * answers `GET /ext/bridge-config` with the bridge WebSocket URL of the dsh
- * instance it belongs to.
+ * Discovery beacon: a loopback-only HTTP listener on a well-known port.
  *
- * The extension can only find the bridge by probing fixed ports, but hosts
- * such as DeepSeek Harness Desktop start `dsh web --port 0` and land on a
- * random port every launch. The beacon gives those instances a stable place
- * for the extension to ask "where is your bridge?" without any host-side
- * configuration. It serves nothing else: every other path is 404, and it
- * never binds anything but 127.0.0.1.
+ * Contract
+ *   GET /ext/bridge-config → 200 `{"wsUrl": "<bridge URL of this dsh instance>"}`
+ *   anything else          → 404
+ *   bind address           → 127.0.0.1 only
  *
- * Multiple dsh instances on one machine each take the next free port in the
- * candidate window, so a CLI `dsh web` and the desktop app can coexist; the
- * extension probes the whole window.
+ * Port selection
+ *   candidates = port … port + DISCOVERY_PORT_WINDOW - 1, minus `skipPorts`
+ *   the first free candidate wins; each dsh instance on the machine takes the next one
+ *   whole window taken → no beacon, one warning, nothing thrown
+ *
+ * Serves hosts that run `dsh web --port 0` (DeepSeek Harness Desktop): the
+ * extension probes this fixed window instead of the host's random port.
  *
  * @module @onenightcarnival/dsh-bridge-browser/src/discovery-beacon
  */
@@ -20,27 +20,27 @@
 import { createServer, type Server } from 'node:http'
 import { BRIDGE_CONFIG_PATH } from './protocol.ts'
 
-/** Default beacon port; also the first entry of the extension's probe window. */
+/** Default beacon port; first entry of the extension's probe window. */
 export const DEFAULT_DISCOVERY_PORT = 43189
 
-/** Number of consecutive ports (starting at the configured one) the beacon may fall back through. */
+/** Window size: the configured port plus the next `DISCOVERY_PORT_WINDOW - 1` ports. */
 export const DISCOVERY_PORT_WINDOW = 4
 
 /** Running beacon handle. */
 export interface DiscoveryBeacon {
-  /** Port the beacon actually bound (the configured port or a fallback inside the window). */
+  /** Port actually bound: the configured port or a fallback inside the window. */
   readonly port: number
-  /** Stop listening and settle once the socket is closed. */
+  /** Stop listening; settles once the socket is closed. */
   close(): Promise<void>
 }
 
 /** Beacon start options. */
 export interface DiscoveryBeaconOptions {
-  /** First port to try; the window extends `DISCOVERY_PORT_WINDOW - 1` ports above it. */
+  /** First candidate port. */
   port: number
-  /** Ports to skip (typically the host webserver's own port, which already serves the config route). */
+  /** Excluded candidates; normally the host webserver port, which serves the route itself. */
   skipPorts?: readonly number[]
-  /** Resolve the bridge WebSocket URL at request time (the host port is stable, but keep it lazy). */
+  /** Bridge WebSocket URL, resolved per request. */
   resolveWsUrl: () => string
   /** Diagnostics sink. */
   log?: { info(message: string): void; warn(message: string): void }
@@ -74,9 +74,8 @@ function listen(server: Server, port: number): Promise<void> {
 }
 
 /**
- * Start the beacon on the first free port of the window.
- * @param options - port window, skip list and URL resolver.
- * @returns the running beacon, or undefined when every candidate port is taken (logged, never thrown).
+ * Start the beacon on the first free candidate port.
+ * @returns the running beacon, or undefined when the whole window is taken (warned, never thrown).
  */
 export async function startDiscoveryBeacon(options: DiscoveryBeaconOptions): Promise<DiscoveryBeacon | undefined> {
   const skip = new Set(options.skipPorts ?? [])
@@ -92,7 +91,7 @@ export async function startDiscoveryBeacon(options: DiscoveryBeaconOptions): Pro
       res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' })
       res.end(JSON.stringify({ wsUrl: options.resolveWsUrl() }))
     })
-    // Idle keep-alive sockets would otherwise delay close() during HMR/unload.
+    // Short keep-alive so close() settles promptly on HMR/unload.
     server.keepAliveTimeout = 1_000
     try {
       await listen(server, port)

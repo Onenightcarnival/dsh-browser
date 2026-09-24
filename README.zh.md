@@ -8,7 +8,13 @@
 
 `dsh` 是由 DeepSeek AI 开发的开源、插件化 agent harness（智能体框架）。本仓库将配套的浏览器桥插件与 Chrome/Firefox MV3 扩展组成一个独立的 pnpm workspace。
 
-本仓库是 [Lum1104/dsh-browser](https://github.com/Lum1104/dsh-browser) 的分支，面向 [DeepSeek Harness Desktop](https://github.com/Onenightcarnival/deepseek-harness-desktop) 桌面版：桥插件改用 `@onenightcarnival` scope 发布，并带一个固定端口的发现信标，让随机端口启动的桌面版也能被扩展找到；发布页提供可直接从桌面版配置中心安装的 `.tgz` 与扩展 zip。安装方法见[在 DeepSeek Harness Desktop 中使用](#在-deepseek-harness-desktop-中使用)。
+本仓库是 [Lum1104/dsh-browser](https://github.com/Lum1104/dsh-browser) 的分支，面向 [DeepSeek Harness Desktop](https://github.com/Onenightcarnival/deepseek-harness-desktop) 桌面版。与上游的差异：
+
+- 桥插件以 `@onenightcarnival/dsh-bridge-browser` 发布；
+- 固定端口的发现信标，让扩展找到以随机端口启动 dsh 的桌面版；
+- 发布页提供桌面版插件管理器可直接安装的 `.tgz` 与 Chrome 扩展 zip。
+
+安装方法见[在 DeepSeek Harness Desktop 中使用](#在-deepseek-harness-desktop-中使用)。
 
 浏览器操作仍采用纯文本设计：页面会转换为结构化文本和带编号的交互元素清单，模型通过编号定位元素。dsh 0.1.5 的多模态对话走独立通道——宿主声明图片能力时，侧栏可发送 PNG、JPEG、WebP 和 GIF；浏览器工具本身仍不会截取页面截图。
 
@@ -38,16 +44,30 @@ $s="$env:TEMP\dsh-install.ps1"; irm https://raw.githubusercontent.com/Onenightca
 
 ## 在 DeepSeek Harness Desktop 中使用
 
-桌面版把 dsh 服务跑在随机端口上，扩展靠固定端口找不到它。本分支的桥插件在启动时另开一个只回 `/ext/bridge-config` 的回环信标（默认 `127.0.0.1:43189`，被占时顺延到 43192，配置 `discoveryPort: 0` 关闭），把真实的桥地址告诉扩展，桌面版代码不需要任何改动。
+桌面版以随机端口启动 dsh。桥插件因此运行一个发现信标：监听 `127.0.0.1:43189`（被占时顺延到 43192）的回环端口，只回 `/ext/bridge-config`，返回真实的桥地址。扩展探测这个端口窗口，桌面版无需改动。`discoveryPort: 0` 关闭信标。
 
-1. 到 [Releases](https://github.com/Onenightcarnival/dsh-browser/releases) 下载 `onenightcarnival-dsh-bridge-browser-<版本>.tgz` 和 `dsh-browser-extension-chrome-<版本>.zip`（推送 `vX.Y.Z` 标签即触发 `.github/workflows/release.yml` 自动构建并挂到 Release，版本号以标签为准）。也可以在源码 checkout 里 `pnpm install && pnpm run build && pnpm run package:desktop`，产物在 `dist-desktop/`。
-2. 打开桌面版菜单「插件 → 配置中心… → 插件」，点「从 .tgz 安装」，选中下载的 `.tgz`。桌面版会执行 `dsh plugin --profile web add file:<路径>`，安装 `ws` 等依赖并注册桥插件的 `dsh.bundle` 组合层。按提示重启桌面版。
-3. 把 zip 解压到一个不会删的目录，打开 `chrome://extensions`，开启「开发者模式」，点「加载已解压的扩展程序」选中该目录。
-4. 打开任意网页，点击 DeepSeek 鲸鱼图标打开侧边栏，等待显示**已连接**。扩展创建的会话默认落在 `~/.dsh/browser-sessions` 工作区，也会出现在桌面版的会话列表里。
+### 安装
 
-桌面版内核升级到新版本线后，桥插件需要同步适配上游后重新安装；本分支钉在 dsh 0.1.5-rc.2，与桌面版当前内置版本一致。
+1. 从 [Releases](https://github.com/Onenightcarnival/dsh-browser/releases) 下载 `onenightcarnival-dsh-bridge-browser-<版本>.tgz` 和 `dsh-browser-extension-chrome-<版本>.zip`，或在源码 checkout 里构建：
 
-**排查**：桌面版运行时，浏览器打开 `http://127.0.0.1:43189/ext/bridge-config` 应返回 `{"wsUrl":"ws://127.0.0.1:<随机端口>/ext/bridge"}`。返回不了说明桥插件没装进 web profile（配置中心插件列表里应有 `@onenightcarnival/dsh-bridge-browser`）或桌面版没有重启；43189 被别的程序占用时看桌面版日志里 `discovery beacon listening on` 报告的实际端口，或在扩展设置里手动填写地址。
+   ```sh
+   pnpm install && pnpm run build && pnpm run package:desktop   # → dist-desktop/
+   ```
+
+2. 桌面版：「插件 → 配置中心… → 插件 → 从 .tgz 安装」，选中 `.tgz`，按提示重启。桌面版执行 `dsh plugin --profile web add file:<路径>`，安装插件依赖并注册其 `dsh.bundle` 层。
+3. Chrome：把 zip 解压到一个不会删的目录，打开 `chrome://extensions`，开启「开发者模式」，「加载已解压的扩展程序」选中该目录。
+4. 打开任意网页，点击 DeepSeek 鲸鱼图标。侧边栏显示**已连接**；扩展创建的会话落在 `~/.dsh/browser-sessions`，也出现在桌面版的会话列表里。
+
+### 兼容性
+
+桥插件钉在 dsh 0.1.5-rc.2，即桌面版当前内置版本。桌面版升级到新的 dsh 版本线后，桥插件需要重新适配并重新安装。
+
+### 排查
+
+桌面版运行时，`http://127.0.0.1:43189/ext/bridge-config` 返回 `{"wsUrl":"ws://127.0.0.1:<端口>/ext/bridge"}`。
+
+- 没有响应：桥插件没装进 web profile（插件管理器里应有 `@onenightcarnival/dsh-bridge-browser`），或桌面版没有重启。
+- 43189 被别的程序占用：桌面版日志里 `discovery beacon listening on` 一行给出实际端口；也可以在扩展设置里手动填写桥地址。
 
 ## 性能基准
 
@@ -193,6 +213,17 @@ pnpm --filter dsh-browser-extension run test
 - `@deepseek-ai/dsh` 与桥接插件的依赖固定在同一条经过验证的公开发布线上；升级时必须同时更新 manifest、锁文件并重跑根目录检查。
 
 `check:runtime` 检查实际解析的 DSH 依赖和锁文件；`test:smoke` 使用临时 DSH home 启动真实 web 宿主，验证桥接和重启后的会话读取，无需模型密钥。这些检查在本地运行；发布流水线只做 typecheck、构建与打包。
+
+### 发布
+
+版本号只有一个，提交在五个文件里（根目录、桥插件、扩展的 `package.json`，以及两份浏览器 manifest），也就是制品的版本。`scripts/version.mjs` 负责写入和校验：
+
+```sh
+node scripts/version.mjs set 0.2.0
+git commit -am "v0.2.0" && git tag v0.2.0 && git push origin main v0.2.0
+```
+
+推送标签触发 `.github/workflows/release.yml`：标签与提交的版本号不一致即失败；一致则 typecheck、构建、打包，并把 `.tgz`、扩展 zip 和 `SHA256SUMS.txt` 挂到 GitHub Release。带预发布后缀的标签（`v0.2.0-rc.1`）标记为 pre-release；浏览器 manifest 只带数字部分。
 
 如果遇到 `cache.hydratePrepared is not a function`，更新仓库后重新运行 `pnpm install --frozen-lockfile` 和 `pnpm run build`，再重启 `pnpm start`。无需删除会话数据或清空全局缓存。
 

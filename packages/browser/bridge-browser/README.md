@@ -16,6 +16,7 @@ The **browser-operation bridge** for dsh: mounts a token-authenticated WebSocket
 | `maxInteractiveItems` | `number` | 60 | Upper bound on interactive inventory items per snapshot. |
 | `sessionWorkspacePath` | `string` | `~/.dsh/browser-sessions` | Dedicated Host Workspace for extension-created sessions. The plugin creates and idempotently registers the directory on the first implicit `session.create`; the session cwd becomes this path, so the GUI shows a `browser-sessions` workspace group. Set `""` to keep sessions Ungrouped. |
 | `deferSessionCreate` | `boolean` | `true` | Sessions materialize only on the first message: `session.create` answers with a provisional id (nothing persisted), history reads empty, and the first `session.prompt` creates the real session (same id, original payload). Opening the panel without chatting leaves zero trace in the session store/GUI. |
+| `discoveryPort` | `number` | 43189 | Discovery beacon: a loopback listener that answers only `/ext/bridge-config` with this instance's bridge URL, for hosts on a random web port (DeepSeek Harness Desktop). Falls back through the next three ports when taken; `0` disables. |
 
 Workspace grouping is best-effort. If the composition has no workspace domain, directory creation fails, or `workspace.create` rejects the path, the plugin logs one warning and sends every session creation without an injected workspace so browser chat remains usable.
 

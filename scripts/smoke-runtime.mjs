@@ -41,8 +41,8 @@ const legacyLog = [
 // The JSONL container requires its header in a separate Zstandard frame.
 const legacyBytes = Buffer.concat(legacyLog.trimEnd().split('\n').map(line => zstdCompressSync(Buffer.from(line + '\n'))))
 const token = randomUUID()
-// The discovery beacon normally sits on 43189; the smoke picks a free port so
-// it never collides with a developer's running desktop app or CLI host.
+// Beacon on a free port instead of the default 43189: no collision with a
+// running desktop app or CLI host.
 const discoveryPort = await new Promise((resolve, reject) => {
   const probe = createServer()
   probe.once('error', reject)
@@ -121,8 +121,7 @@ async function start(reopen) {
   assert.equal(response.status, 200)
   const config = await response.json()
   assert.equal(config.wsUrl, base.replace('http:', 'ws:') + '/ext/bridge')
-  // Random-port hosts (the desktop app runs `dsh web --port 0`) are found
-  // through the fixed-port discovery beacon, which must report the same URL.
+  // The beacon must advertise the host route's URL and serve nothing else.
   const beacon = await waitFor(async () => {
     try {
       const reply = await fetch(`http://127.0.0.1:${discoveryPort}/ext/bridge-config`, { signal: AbortSignal.timeout(2_000) })

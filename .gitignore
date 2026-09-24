@@ -11,3 +11,6 @@ node_modules/
 
 # desktop release artifacts
 dist-desktop/
+
+# macOS
+.DS_Store

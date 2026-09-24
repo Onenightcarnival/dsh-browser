@@ -1,18 +1,16 @@
 #!/usr/bin/env node
 /**
- * Produce the two artifacts DeepSeek Harness Desktop users install by hand:
+ * Desktop install artifacts → dist-desktop/
  *
- *   dist-desktop/onenightcarnival-dsh-bridge-browser-<ver>.tgz
- *       `pnpm pack` of the bridge plugin. Install it from the desktop app's
- *       配置中心 → 插件 → 「从 .tgz 安装」 (which runs
- *       `dsh plugin --profile web add file:<path>` under the hood).
+ *   onenightcarnival-dsh-bridge-browser-<version>.tgz   `pnpm pack` of the bridge plugin
+ *       install: desktop app → 配置中心 → 插件 → 「从 .tgz 安装」
+ *                (= `dsh plugin --profile web add file:<path>`)
+ *   dsh-browser-extension-chrome-<version>.zip          extensions/dsh-browser/dist, entries at the archive root
+ *       install: chrome://extensions → Load unpacked → the unzipped folder
+ *   SHA256SUMS.txt                                      covers both
  *
- *   dist-desktop/dsh-browser-extension-chrome-<ver>.zip
- *       The built Chrome extension. Unzip it anywhere and load that folder
- *       as an unpacked extension at chrome://extensions.
- *
- * plus SHA256SUMS.txt covering both. Run `pnpm run build` first (or let this
- * script do it with --build). The release workflow uploads the same files.
+ * Input: `pnpm run build` output (`--build` runs it first).
+ * <version>: the committed package version (scripts/version.mjs).
  */
 
 import { execFileSync, spawnSync } from 'node:child_process'
@@ -67,9 +65,8 @@ execFileSync('pnpm', ['pack', '--pack-destination', OUT_DIR], { cwd: BRIDGE_DIR,
 const tgz = readdirSync(OUT_DIR).find(name => name.endsWith('.tgz'))
 if (tgz === undefined) throw new Error('package-desktop: pnpm pack produced no tarball')
 
-// 2. Chrome extension zip.
-// Name by the extension package version (may carry a prerelease label the
-// Chrome manifest cannot), so the zip and the tgz share one version string.
+// 2. Chrome extension zip, named by the package version (the manifest drops
+// prerelease labels) so zip and tgz share one version string.
 const extensionPackage = JSON.parse(readFileSync(join(EXTENSION_DIR, 'package.json'), 'utf8'))
 const zipName = `dsh-browser-extension-chrome-${extensionPackage.version}.zip`
 zipDirectory(join(EXTENSION_DIR, 'dist'), join(OUT_DIR, zipName))

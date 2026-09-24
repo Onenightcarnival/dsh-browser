@@ -8,7 +8,13 @@ Connect [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) to t
 
 `dsh` is DeepSeek AI's open-source, plugin-based agent harness. This repository provides a companion browser bridge plugin and Chrome/Firefox MV3 extension as one standalone pnpm workspace.
 
-This repository is a fork of [Lum1104/dsh-browser](https://github.com/Lum1104/dsh-browser) adapted for [DeepSeek Harness Desktop](https://github.com/Onenightcarnival/deepseek-harness-desktop): the bridge plugin is published under the `@onenightcarnival` scope and carries a fixed-port discovery beacon so the extension finds a desktop app that starts dsh on a random port; releases ship a `.tgz` installable from the desktop app's plugin manager plus the extension zip. See [Using with DeepSeek Harness Desktop](#using-with-deepseek-harness-desktop).
+This repository is a fork of [Lum1104/dsh-browser](https://github.com/Lum1104/dsh-browser) adapted for [DeepSeek Harness Desktop](https://github.com/Onenightcarnival/deepseek-harness-desktop). Differences from upstream:
+
+- the bridge plugin is published as `@onenightcarnival/dsh-bridge-browser`;
+- a fixed-port discovery beacon lets the extension find a desktop app that starts dsh on a random port;
+- releases ship a `.tgz` for the desktop app's plugin manager plus a Chrome extension zip.
+
+Setup is in [Using with DeepSeek Harness Desktop](#using-with-deepseek-harness-desktop).
 
 Browser operation remains text-only: pages become structured text with a numbered inventory of interactive elements, and the model addresses those elements by number. dsh 0.1.5 multimodal chat is separate from that page channel—the side panel accepts PNG, JPEG, WebP, and GIF attachments when the host advertises image support, while browser tools still never capture screenshots.
 
@@ -38,16 +44,30 @@ When the installer opens `chrome://extensions`, follow its instructions to load 
 
 ## Using with DeepSeek Harness Desktop
 
-The desktop app runs the dsh server on a random port, which the extension's fixed-port probe cannot find. This fork's bridge plugin therefore opens a loopback-only discovery beacon that serves nothing but `/ext/bridge-config` (default `127.0.0.1:43189`, falling back through 43192 when taken; `discoveryPort: 0` disables it) and reports the real bridge URL. The desktop app itself needs no change.
+The desktop app starts dsh on a random port. The bridge plugin therefore runs a discovery beacon: a loopback listener on `127.0.0.1:43189` (falling back through 43192) that answers only `/ext/bridge-config` with the real bridge URL. The extension probes that port window, and the desktop app needs no change. `discoveryPort: 0` disables the beacon.
 
-1. Download `onenightcarnival-dsh-bridge-browser-<version>.tgz` and `dsh-browser-extension-chrome-<version>.zip` from [Releases](https://github.com/Onenightcarnival/dsh-browser/releases) (pushing a `vX.Y.Z` tag runs `.github/workflows/release.yml`, which builds both and attaches them to the Release; the version comes from the tag), or build them from a checkout with `pnpm install && pnpm run build && pnpm run package:desktop` (output in `dist-desktop/`).
-2. In the desktop app open 插件 → 配置中心… → 插件, click 「从 .tgz 安装」 and pick the `.tgz`. The app runs `dsh plugin --profile web add file:<path>`, which installs the plugin's dependencies (`ws`) and registers its `dsh.bundle` composition layer. Restart the app when prompted.
-3. Unzip the extension into a folder you will keep, open `chrome://extensions`, enable Developer mode and choose "Load unpacked" on that folder.
-4. Open any page and click the DeepSeek whale icon; the side panel should show **Connected**. Sessions created from the extension land in the `~/.dsh/browser-sessions` workspace and also appear in the desktop app's session list.
+### Install
 
-When the desktop app moves to a new dsh release line, the bridge must be rebased on upstream and reinstalled; this fork is pinned to dsh 0.1.5-rc.2, the desktop app's current bundled version.
+1. Get `onenightcarnival-dsh-bridge-browser-<version>.tgz` and `dsh-browser-extension-chrome-<version>.zip` from [Releases](https://github.com/Onenightcarnival/dsh-browser/releases), or build them from a checkout:
 
-**Troubleshooting**: while the desktop app is running, `http://127.0.0.1:43189/ext/bridge-config` should return `{"wsUrl":"ws://127.0.0.1:<random port>/ext/bridge"}`. If it does not, the plugin is not in the web profile (the plugin manager should list `@onenightcarnival/dsh-bridge-browser`) or the app was not restarted; if another program holds 43189, check the desktop log for the port reported by `discovery beacon listening on`, or set the address manually in the extension settings.
+   ```sh
+   pnpm install && pnpm run build && pnpm run package:desktop   # → dist-desktop/
+   ```
+
+2. Desktop app: 插件 → 配置中心… → 插件 → 「从 .tgz 安装」, pick the `.tgz`, restart when prompted. The app runs `dsh plugin --profile web add file:<path>`, which installs the plugin's dependencies and registers its `dsh.bundle` layer.
+3. Chrome: unzip the extension into a folder you will keep, open `chrome://extensions`, enable Developer mode, and choose "Load unpacked" on that folder.
+4. Open any page and click the DeepSeek whale icon. The side panel shows **Connected**; sessions created from the extension land in `~/.dsh/browser-sessions` and appear in the desktop app's session list.
+
+### Compatibility
+
+The bridge is pinned to dsh 0.1.5-rc.2, the desktop app's bundled version. A desktop release on a new dsh line needs a rebased bridge and a reinstall.
+
+### Troubleshooting
+
+While the desktop app runs, `http://127.0.0.1:43189/ext/bridge-config` returns `{"wsUrl":"ws://127.0.0.1:<port>/ext/bridge"}`.
+
+- No response: the plugin is not in the web profile (the plugin manager should list `@onenightcarnival/dsh-bridge-browser`), or the app has not been restarted.
+- 43189 held by another program: the desktop log line `discovery beacon listening on` names the port in use; alternatively set the bridge address in the extension settings.
 
 ## Performance
 
@@ -193,6 +213,17 @@ Notes:
 - The dependencies of `@deepseek-ai/dsh` and the bridge plugin are pinned to the same tested public release line. An upgrade must update the manifests and lockfile together and rerun the root checks.
 
 `check:runtime` checks the resolved DSH dependencies and lockfile; `test:smoke` starts the real web host in a temporary DSH home and verifies the bridge and session reads after a restart, without model credentials. These checks run locally; the release workflow only typechecks, builds and packages.
+
+### Release
+
+One version is committed in five files (root, bridge and extension `package.json`, both browser manifests) and is the version of the artifacts. `scripts/version.mjs` writes and checks it:
+
+```sh
+node scripts/version.mjs set 0.2.0
+git commit -am "v0.2.0" && git tag v0.2.0 && git push origin main v0.2.0
+```
+
+Pushing the tag runs `.github/workflows/release.yml`, which fails unless the tag equals the committed version, then typechecks, builds, packages, and attaches the `.tgz`, the extension zip and `SHA256SUMS.txt` to a GitHub Release. A prerelease label (`v0.2.0-rc.1`) marks the Release as pre-release; browser manifests carry the numeric part only.
 
 If you encounter `cache.hydratePrepared is not a function`, update the repository, rerun `pnpm install --frozen-lockfile` and `pnpm run build`, then restart `pnpm start`. Session data and the global package cache can be kept.
 
