@@ -1,4 +1,5 @@
 import { mkdtemp, rm } from 'node:fs/promises'
+import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -50,16 +51,18 @@ describe('assertPositiveInteger', () => {
 })
 
 /** Valid budgets (the Loader applies schema defaults; hand-built tests pass them explicitly). */
-const VALID = { toolTimeoutMs: 90_000, snapshotMaxChars: 32_000, maxInteractiveItems: 60 }
+const VALID = { toolTimeoutMs: 90_000, snapshotMaxChars: 32_000, maxInteractiveItems: 60, discoveryPort: 0 }
 
 describe('config', () => {
   it('resolves defaults, including an enabled workspace under the dsh home', () => {
     expect(resolveConfig({})).toEqual({
       ...VALID,
+      discoveryPort: 43189,
       sessionWorkspacePath: dshHomePath('browser-sessions'),
       deferSessionCreate: true,
     })
     expect(new Config().sessionWorkspacePath).toBe(dshHomePath('browser-sessions'))
+    expect(new Config().discoveryPort).toBe(43189)
   })
 
   it('preserves explicit values and the empty-string workspace opt-out', () => {
@@ -70,6 +73,7 @@ describe('config', () => {
       maxInteractiveItems: 3,
       sessionWorkspacePath: '',
       deferSessionCreate: false,
+      discoveryPort: 0,
     })).toEqual({
       token: 'fixed',
       toolTimeoutMs: 1,
@@ -77,6 +81,7 @@ describe('config', () => {
       maxInteractiveItems: 3,
       sessionWorkspacePath: '',
       deferSessionCreate: false,
+      discoveryPort: 0,
     })
     expect(new Config({ sessionWorkspacePath: '' }).sessionWorkspacePath).toBe('')
   })
@@ -117,5 +122,40 @@ describe('apply', () => {
     await expect(apply(stubContext(), { ...VALID, toolTimeoutMs: 0 })).rejects.toThrow(/toolTimeoutMs/)
     await expect(apply(stubContext(), { ...VALID, snapshotMaxChars: -1 })).rejects.toThrow(/snapshotMaxChars/)
     await expect(apply(stubContext(), { ...VALID, snapshotMaxChars: 499 })).rejects.toThrow(/at least 500/)
+    await expect(apply(stubContext(), { ...VALID, discoveryPort: 70000 })).rejects.toThrow(/discoveryPort/)
+    await expect(apply(stubContext(), { ...VALID, discoveryPort: 1.5 })).rejects.toThrow(/discoveryPort/)
+  })
+
+  it('starts the discovery beacon on the configured port and closes it on dispose', async () => {
+    const ctx = stubContext()
+    const disposers: Array<() => unknown> = []
+    ;(ctx as unknown as { effect: unknown }).effect = (fn: () => unknown) => {
+      const dispose = fn() as () => unknown
+      if (typeof dispose === 'function') disposers.push(dispose)
+      return dispose
+    }
+    const probe = createServer()
+    await new Promise<void>((resolve) => { probe.listen(0, '127.0.0.1', resolve) })
+    const free = (probe.address() as { port: number }).port
+    await new Promise<void>((resolve) => { probe.close(() => resolve()) })
+    ;(ctx.webServer as { port: number }).port = 4321
+
+    await apply(ctx, { token: 'fixed-token', ...VALID, sessionWorkspacePath: '', discoveryPort: free })
+    // The beacon starts asynchronously inside its effect; poll until it answers.
+    let body: { wsUrl?: string } | undefined
+    for (let attempt = 0; attempt < 50 && body === undefined; attempt++) {
+      try {
+        const response = await fetch(`http://127.0.0.1:${free}/ext/bridge-config`)
+        if (response.ok) body = await response.json() as { wsUrl?: string }
+      } catch {
+        await new Promise((resolve) => setTimeout(resolve, 20))
+      }
+    }
+    expect(body?.wsUrl).toBe('ws://127.0.0.1:4321/ext/bridge')
+    const missing = await fetch(`http://127.0.0.1:${free}/anything-else`)
+    expect(missing.status).toBe(404)
+
+    for (const dispose of disposers.reverse()) await dispose()
+    await expect(fetch(`http://127.0.0.1:${free}/ext/bridge-config`)).rejects.toThrow()
   })
 })

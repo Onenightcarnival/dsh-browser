@@ -110,11 +110,13 @@ const SETTINGS_DEFAULTS: Settings = {
 /**
  * 自动探测的候选端口：
  * - dsh web（CLI）默认 3080，端口被占时依次回退 3081 / 3090；
- * - DSH Desktop 默认由系统随机分配本地 Web 端口（`dsh-desktop.port: 0`），
- *   用户指南推荐固定为 43189（见 deepseek-harness-desktop docs/user-guide）；
+ * - 43189–43192 是桥插件的发现信标窗口：DeepSeek Harness Desktop 等宿主以
+ *   `--port 0` 随机端口启动 dsh，桥插件会在这个固定窗口里另开一个只回
+ *   /ext/bridge-config 的回环监听，把真实的 ws 地址告诉扩展；
  * - 14389 为历史桌面应用端口，保留兼容旧版。
+ * 按顺序探测；本机没有监听的端口会立即被拒绝，所以逐个探测的代价很小。
  */
-const DISCOVERY_PORTS = [3080, 3081, 3090, 14389, 43189]
+const DISCOVERY_PORTS = [3080, 3081, 3090, 43189, 43190, 43191, 43192, 14389]
 const LEGACY_LOCAL_URL = 'ws://127.0.0.1:3080'
 
 /** 探测本机 dsh 的桥地址：fetch /ext/bridge-config 直到成功。 */
@@ -122,7 +124,7 @@ async function discoverBridge(shouldContinue: () => boolean = () => true): Promi
   for (const port of DISCOVERY_PORTS) {
     if (!shouldContinue()) return undefined
     try {
-      const response = await fetch(`http://127.0.0.1:${port}/ext/bridge-config`, {
+      const response = await fetch(`http://127.0.0.1:${port}${BRIDGE_CONFIG_PATH}`, {
         signal: AbortSignal.timeout(1_500),
       })
       if (!shouldContinue()) return undefined

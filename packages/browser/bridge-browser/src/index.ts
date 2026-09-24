@@ -35,6 +35,7 @@ import {
   DEFAULT_SNAPSHOT_MAX_CHARS,
   MIN_SNAPSHOT_MAX_CHARS,
 } from './protocol.ts'
+import { DEFAULT_DISCOVERY_PORT, startDiscoveryBeacon } from './discovery-beacon.ts'
 import { withSessionDeferral } from './session-deferral.ts'
 import { withSessionWorkspace } from './session-workspace.ts'
 import { purgeSessionFiles, type SessionPurgeDeps } from './session-purge.ts'
@@ -81,6 +82,12 @@ export interface Config {
   sessionWorkspacePath?: string
   /** Defer real session creation until the first prompt. Defaults to true. */
   deferSessionCreate?: boolean
+  /**
+   * Loopback port of the discovery beacon that answers `/ext/bridge-config`
+   * for hosts on a random web port (DeepSeek Harness Desktop). Defaults to
+   * 43189; falls back through the next three ports when taken; 0 disables.
+   */
+  discoveryPort?: number
 }
 
 export const Config: z<Config> = z.object({
@@ -90,6 +97,7 @@ export const Config: z<Config> = z.object({
   maxInteractiveItems: z.number().step(1).min(1).default(DEFAULT_MAX_INTERACTIVE_ITEMS),
   sessionWorkspacePath: z.string().default(DEFAULT_SESSION_WORKSPACE_PATH),
   deferSessionCreate: z.boolean().default(DEFAULT_DEFER_SESSION_CREATE),
+  discoveryPort: z.number().step(1).min(0).max(65535).default(DEFAULT_DISCOVERY_PORT),
 })
 
 /** The shape after schemastery applies its defaults to every field. */
@@ -115,6 +123,10 @@ export function resolveConfig(config: Config): ResolvedConfig {
     maxInteractiveItems: config.maxInteractiveItems ?? DEFAULT_MAX_INTERACTIVE_ITEMS,
     sessionWorkspacePath: config.sessionWorkspacePath ?? DEFAULT_SESSION_WORKSPACE_PATH,
     deferSessionCreate: config.deferSessionCreate ?? DEFAULT_DEFER_SESSION_CREATE,
+    discoveryPort: config.discoveryPort ?? DEFAULT_DISCOVERY_PORT,
+  }
+  if (!Number.isInteger(resolved.discoveryPort) || resolved.discoveryPort < 0 || resolved.discoveryPort > 65535) {
+    throw new Error('bridge-browser: discoveryPort must be an integer between 0 and 65535')
   }
   assertPositiveInteger('toolTimeoutMs', resolved.toolTimeoutMs)
   assertPositiveInteger('snapshotMaxChars', resolved.snapshotMaxChars)
@@ -244,6 +256,24 @@ function mountBridge(
     },
   }
   ctx.effect(() => ctx.webServer.register(configRoute), 'bridge-browser: /ext/bridge-config route')
+
+  // Well-known-port beacon for hosts whose web port is random (the desktop
+  // app starts `dsh web --port 0`). Same payload as the route above; the host
+  // port itself is skipped because the route already serves it there.
+  if (resolved.discoveryPort > 0) {
+    ctx.effect(() => {
+      const beacon = startDiscoveryBeacon({
+        port: resolved.discoveryPort,
+        skipPorts: [ctx.webServer.port],
+        resolveWsUrl: () => `ws://127.0.0.1:${ctx.webServer.port}${BRIDGE_PATH}`,
+        log: { info: (m) => { ctx.logger.info(m) }, warn: (m) => { ctx.logger.warn(m) } },
+      }).catch((error: unknown) => {
+        ctx.logger.warn(`browser bridge: discovery beacon failed to start: ${String(error)}`)
+        return undefined
+      })
+      return async () => { await (await beacon)?.close() }
+    }, 'bridge-browser: discovery beacon')
+  }
 
   ctx.effect(() => {
     const disposers = registerBrowserTools(ctx, server, {

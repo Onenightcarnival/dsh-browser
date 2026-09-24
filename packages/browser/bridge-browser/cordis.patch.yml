@@ -13,6 +13,11 @@
 # string to keep those sessions Ungrouped.
 # Sessions materialize only on the first message (deferSessionCreate defaults
 # to true): opening the side panel without chatting leaves no session behind.
+# discoveryPort (default 43189) opens a loopback-only beacon that answers
+# /ext/bridge-config with this instance's real bridge URL, so hosts on a
+# random web port (DeepSeek Harness Desktop starts `dsh web --port 0`) are
+# still found by the extension's fixed-port probe. Falls back through the
+# next three ports when taken; set 0 to disable.
 #
 # Security: the bridge path carries its own token auth and refuses privileged
 # gateway methods (settings/credentials/open-*) for non-loopback remotes. Do
@@ -27,3 +32,4 @@
         toolTimeoutMs: 90000
         snapshotMaxChars: 32000
         maxInteractiveItems: 60
+        discoveryPort: 43189
