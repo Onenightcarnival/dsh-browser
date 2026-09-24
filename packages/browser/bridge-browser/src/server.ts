@@ -95,7 +95,8 @@ export interface BridgeServerDeps {
    * Permanently delete one session's durable storage. Callers archive the
    * session through the gateway first; this only removes files.
    */
-  purgeSession: (sessionId: string) => Promise<void>
+  /** Delete one session; resolves with whether the files are gone now or only after the next restart. */
+  purgeSession: (sessionId: string) => Promise<'purged' | 'deferred'>
   /**
    * Test seam: force the remote address seen by the privilege gate. The
    * sandbox cannot bind arbitrary loopback literals, so the non-loopback
@@ -452,8 +453,13 @@ export class BridgeServer {
         return
       }
       try {
-        await this.deps.purgeSession(sessionId)
-        sendFrame(conn.ws, { t: 'rpc.result', id: frame.id, ok: true, result: { purged: true } })
+        const outcome = await this.deps.purgeSession(sessionId)
+        sendFrame(conn.ws, {
+          t: 'rpc.result',
+          id: frame.id,
+          ok: true,
+          result: outcome === 'purged' ? { purged: true } : { purged: false, deferred: true },
+        })
       } catch (error: unknown) {
         const code = error instanceof SessionPurgeError ? error.code : 'internal'
         const message = error instanceof Error ? error.message : String(error)

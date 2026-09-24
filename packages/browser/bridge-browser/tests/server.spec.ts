@@ -44,7 +44,7 @@ async function startBridge(overrides: Partial<ConstructorParameters<typeof Bridg
     toolTimeoutMs: 1_000,
     caps: { textOnly: true, snapshotMaxChars: 12_000, maxInteractiveItems: 60 },
     injectBrowserSnapshot: vi.fn(),
-    purgeSession: vi.fn(async () => {}),
+    purgeSession: vi.fn(async () => 'purged' as const),
     ...overrides,
   })
   const server = createServer()
@@ -270,7 +270,8 @@ describe('BridgeServer', () => {
   })
 
   it('purges sessions through the internal RPC without forwarding it to the gateway', async () => {
-    const purgeSession = vi.fn(async () => {})
+    const purgeSession = vi.fn(async (sessionId: string) =>
+      sessionId === 'session-92bad0de-136e-4d1f-a308-d1f5388d608f' ? 'deferred' as const : 'purged' as const)
     const h = await startBridge({ purgeSession })
     harnesses.push(h)
     const { ws, frames } = await connect(h.url)
@@ -289,6 +290,18 @@ describe('BridgeServer', () => {
     expect(h.callMock).not.toHaveBeenCalled()
     expect(frames).toContainEqual({
       t: 'rpc.result', id: 'purge-1', ok: true, result: { purged: true },
+    })
+
+    // A session this runtime still owns is archived now and purged on the next start.
+    send(ws, {
+      t: 'rpc',
+      id: 'purge-deferred',
+      method: BRIDGE_SESSION_PURGE_METHOD,
+      payload: { sessionId: 'session-92bad0de-136e-4d1f-a308-d1f5388d608f' },
+    })
+    await waitFor(() => frames.some((frame) => frame.t === 'rpc.result' && frame.id === 'purge-deferred'))
+    expect(frames).toContainEqual({
+      t: 'rpc.result', id: 'purge-deferred', ok: true, result: { purged: false, deferred: true },
     })
 
     send(ws, {

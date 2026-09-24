@@ -639,6 +639,8 @@ export function App(): React.JSX.Element {
   const [relayProfiles, setRelayProfiles] = useState<RelayProfileDraft[]>([])
   const [relayLoaded, setRelayLoaded] = useState(false)
   const [relayNotice, setRelayNotice] = useState<string | null>(null)
+  /** Outcome hint under the session list (e.g. a deletion completed only by archiving). */
+  const [sessionNotice, setSessionNotice] = useState<string | null>(null)
   const [relayBusy, setRelayBusy] = useState(false)
   const [sessionTitle, setSessionTitle] = useState<string | null>(null)
   const [resumeHint, setResumeHint] = useState<{ ready: boolean; sessionId: string | null }>({ ready: false, sessionId: null })
@@ -1176,6 +1178,7 @@ export function App(): React.JSX.Element {
       return
     }
     if (state !== 'connected' || sessionSwitchBlocked || sessionChangingRef.current) return
+    setSessionNotice(null)
     setShowSessionPicker(true)
     setLoadingSessions(true)
     try {
@@ -1218,8 +1221,11 @@ export function App(): React.JSX.Element {
     const title = projectedSessionTitle(entry) ?? sessionDisplayTitle(entry)
     if (!window.confirm(copy.app.deleteSessionConfirm(title))) return
     try {
-      await api.rpc(BRIDGE_SESSION_PURGE_METHOD, { sessionId: entry.sessionId })
+      const result = await api.rpc<{ purged?: boolean; deferred?: boolean }>(BRIDGE_SESSION_PURGE_METHOD, { sessionId: entry.sessionId })
       setSessionList((prev) => prev.filter((item) => item.sessionId !== entry.sessionId))
+      // A session this dsh process still holds open cannot lose its files
+      // yet; the bridge archived it and will purge on its next start.
+      setSessionNotice(result.deferred === true ? copy.app.deleteSessionDeferred : null)
       if (sessionRef.current === entry.sessionId) {
         setShowSessionPicker(false)
         await startNewSession()
@@ -1967,6 +1973,7 @@ export function App(): React.JSX.Element {
               {copy.app.newSession}
             </button>
           </div>
+          {sessionNotice !== null && <p className="hint session-notice">{sessionNotice}</p>}
           {loadingSessions
             ? <p className="session-empty">{copy.app.sessionPickerLoading}</p>
             : sessionList.length === 0

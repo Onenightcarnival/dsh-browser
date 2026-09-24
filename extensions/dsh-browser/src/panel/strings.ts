@@ -158,6 +158,7 @@ export interface PanelCopy {
     deleteSession: string
     deleteSessionConfirm: (title: string) => string
     deleteSessionFailed: (reason: string) => string
+    deleteSessionDeferred: string
     deletePurgeFailed: (reason: string) => string
     emptyTitle: string
     emptyDescription: string
@@ -378,6 +379,7 @@ const EN: PanelCopy = {
     deleteSession: 'Delete session',
     deleteSessionConfirm: (title) => `Delete “${title}”? Its conversation history will be removed permanently.`,
     deleteSessionFailed: (reason) => `Delete failed: ${reason}`,
+    deleteSessionDeferred: 'Deleted from the list. This dsh process still holds the session open, so its files are removed the next time dsh starts.',
     deletePurgeFailed: (reason) => `Removed from the list, but file cleanup failed (it may reappear after dsh restarts): ${reason}`,
     emptyTitle: 'Hand me the current page',
     emptyDescription: 'I can read the page, find information, and click, fill, or navigate for you.',
@@ -598,6 +600,7 @@ const ZH: PanelCopy = {
     deleteSession: '删除会话',
     deleteSessionConfirm: (title) => `确定删除「${title}」吗？对话历史将被永久移除。`,
     deleteSessionFailed: (reason) => `删除失败：${reason}`,
+    deleteSessionDeferred: '已从列表移除。当前 dsh 进程仍持有该会话，文件会在下次启动 dsh 时清除。',
     deletePurgeFailed: (reason) => `已从列表移除，但文件清理失败（dsh 重启后可能再次出现）：${reason}`,
     emptyTitle: '把当前页面交给我',
     emptyDescription: '我可以阅读页面、查找信息，也可以替你点击、填写和导航。',

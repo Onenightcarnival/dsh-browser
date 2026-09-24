@@ -38,7 +38,15 @@ import {
 import { DEFAULT_DISCOVERY_PORT, startDiscoveryBeacon } from './discovery-beacon.ts'
 import { withSessionDeferral } from './session-deferral.ts'
 import { withSessionWorkspace } from './session-workspace.ts'
-import { purgeSessionFiles, type SessionPurgeDeps } from './session-purge.ts'
+import type { SessionPurgeDeps } from './session-purge.ts'
+import {
+  DEFERRED_PURGE_FILE_NAME,
+  DeferredPurgeStore,
+  deleteSession,
+  drainDeferredPurges,
+  withDeferredPurgeFilter,
+  type SessionDeleteOutcome,
+} from './deferred-purge.ts'
 import { resolveToken } from './token.ts'
 import {
   createRemoteHostApi,
@@ -164,7 +172,10 @@ function mountBridge(
 ): void {
   // Workspace grouping wraps the gateway create; session deferral wraps the
   // result so materialization at first prompt still flows through grouping.
-  const api = withSessionDeferral(
+  // Sessions whose purge is deferred (see deferred-purge.ts) are hidden from
+  // listings at the outermost layer so every caller sees them as deleted.
+  const pendingPurges = new DeferredPurgeStore(dshHomePath(DEFERRED_PURGE_FILE_NAME))
+  const api = withDeferredPurgeFilter(withSessionDeferral(
     withSessionWorkspace(
       hostApi,
       resolved.sessionWorkspacePath,
@@ -172,13 +183,13 @@ function mountBridge(
     ),
     resolved.deferSessionCreate,
     ctx.get('attachments')?.imageLimits,
-  )
+  ), pendingPurges)
   const browserContext = new BrowserContextInjector(ctx.agents)
   ctx.on('agent/session-start', ({ agent }) => {
     browserContext.activate(agent)
   })
 
-  const purgeSession = async (sessionId: string): Promise<void> => {
+  const purgeDeps = async (): Promise<SessionPurgeDeps> => {
     const runningSessionIds = new Set<string>()
     try {
       const listed = await api.call({
@@ -218,8 +229,27 @@ function mountBridge(
         if (!archived.ok) throw new Error(archived.error.message)
       },
     }
-    await purgeSessionFiles(deps, sessionId)
+    return deps
   }
+  const purgeSession = async (sessionId: string): Promise<SessionDeleteOutcome> => deleteSession({
+    purge: await purgeDeps(),
+    store: pendingPurges,
+    isLive: (id) => ctx.agents.get(id as Parameters<typeof ctx.agents.get>[0]) !== undefined,
+  }, sessionId)
+  // Ids queued by an earlier process are purged before any panel can resume
+  // them; a failure here only delays the purge to the next start.
+  void pendingPurges.load()
+    .then(async () => {
+      if (pendingPurges.list().length === 0) return
+      // Persistence and the gateway are sibling Loader entries; wait for the
+      // whole tree before touching session storage.
+      await (ctx.get('loader') as { await?: () => Promise<unknown> } | undefined)?.await?.()
+      await drainDeferredPurges({ purge: await purgeDeps(), store: pendingPurges }, {
+        info: (m) => { ctx.logger.info(m) },
+        warn: (m) => { ctx.logger.warn(m) },
+      })
+    })
+    .catch((error: unknown) => { ctx.logger.warn(`browser bridge: deferred purge queue unavailable: ${String(error)}`) })
 
   const server = new BridgeServer({
     token: tokenRes.token,

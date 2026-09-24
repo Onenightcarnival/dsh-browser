@@ -2495,6 +2495,10 @@ textarea:focus-visible {
   cursor: default;
 }
 
+.session-notice {
+  margin: 4px 0 6px;
+}
+
 .session-empty {
   margin: 6px 0 2px;
   color: var(--faint);

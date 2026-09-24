@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -23,6 +23,11 @@ const home = join(temp, 'home')
 const marker = join(temp, 'observation.json')
 const patch = join(temp, 'smoke.patch.yml')
 const sessionId = `session-${randomUUID()}`
+// Deleted while this process's Agent still owns it → archived now, purged next start.
+const deferredPurgeId = `session-${randomUUID()}`
+// Deleted after a restart, before anything resumes it → purged immediately.
+const coldPurgeId = `session-${randomUUID()}`
+const pendingPurgeFile = join(home, 'ext-bridge-pending-purge.json')
 const legacySessionId = `session-${randomUUID()}`
 const legacyProject = temp.replace(/[\\/:]+/g, '-').replace(/[^A-Za-z0-9._-]/g,
   char => `~${char.charCodeAt(0).toString(16).toUpperCase().padStart(4, '0')}`).replace(/^-+/, '')
@@ -157,7 +162,7 @@ async function start(reopen) {
   }
   socket.send(JSON.stringify({ t: 'hello', token, caps: { textOnly: true, snapshotMaxChars: 32_000, maxInteractiveItems: 60 } }))
   await frame(value => value.t === 'hello.ok')
-  return async (method, payload) => {
+  const rpc = async (method, payload) => {
     const id = randomUUID()
     socket.send(JSON.stringify({ t: 'rpc', id, method, payload }))
     const result = await frame(value => value.t === 'rpc.result' && value.id === id)
@@ -165,6 +170,25 @@ async function start(reopen) {
     assert.equal(result.result?.result?.ok, true, JSON.stringify(result))
     return result.result.result.value
   }
+  // Bridge-internal methods answer with a flat result instead of a gateway envelope.
+  rpc.internal = async (method, payload) => {
+    const id = randomUUID()
+    socket.send(JSON.stringify({ t: 'rpc', id, method, payload }))
+    const result = await frame(value => value.t === 'rpc.result' && value.id === id)
+    assert.equal(result.ok, true, JSON.stringify(result))
+    return result.result
+  }
+  return rpc
+}
+
+async function sessionFiles(id) {
+  const workspaces = await readdir(join(home, 'sessions'))
+  const files = []
+  for (const workspace of workspaces) {
+    try { files.push(...(await readdir(join(home, 'sessions', workspace, id))).filter(name => name !== 'session.lock')) }
+    catch (error) { if (error.code !== 'ENOENT') throw error }
+  }
+  return files
 }
 
 async function observation() {
@@ -203,8 +227,24 @@ try {
   assert.ok(migrated.events.some(({ event }) => event.type === 'system/message'), 'V2 migration must insert the V3 system head')
   assert.equal(migrated.events.find(({ event }) => event.type === 'user/message')?.event.data.content[0].text, 'Saved browser conversation')
   assert.deepEqual(await readFile(legacyFile), legacyBytes, 'migration must preserve the original V2 log')
+  // Deletion: a session created through the gateway stays owned by this
+  // process's idle Agent, so the bridge can only archive it now and must
+  // purge its files on the next start.
+  assert.equal((await rpc('session.create', { sessionId: deferredPurgeId, cwd: temp })).sessionId, deferredPurgeId)
+  assert.equal((await rpc('session.create', { sessionId: coldPurgeId, cwd: temp })).sessionId, coldPurgeId)
+  assert.ok((await sessionFiles(deferredPurgeId)).length > 0, 'deferred-purge session must have durable files')
+  assert.deepEqual(await rpc.internal('bridge.session.purge', { sessionId: deferredPurgeId }), { purged: false, deferred: true })
+  assert.ok(!(await rpc('session.list', {})).items.some(item => item.sessionId === deferredPurgeId), 'deferred session must leave session.list at once')
+  assert.ok((await sessionFiles(deferredPurgeId)).length > 0, 'deferred session keeps its files while owned')
+  assert.deepEqual(JSON.parse(await readFile(pendingPurgeFile, 'utf8')), { sessionIds: [deferredPurgeId] })
   await stop()
   rpc = await start(true)
+  await waitFor(async () => (await sessionFiles(deferredPurgeId)).length === 0, 'deferred purge after restart', 15_000)
+  assert.deepEqual(JSON.parse(await readFile(pendingPurgeFile, 'utf8')), { sessionIds: [] })
+  assert.ok(!(await rpc('session.list', {})).items.some(item => item.sessionId === deferredPurgeId))
+  // A session nothing has resumed since the restart is purged on the spot.
+  assert.deepEqual(await rpc.internal('bridge.session.purge', { sessionId: coldPurgeId }), { purged: true })
+  assert.deepEqual(await sessionFiles(coldPurgeId), [])
   assert.equal((await observation()).source, 'prepared')
   assert.ok((await rpc('session.list', {})).items.some(item => item.sessionId === sessionId))
   assert.deepEqual((await rpc('session.history', { sessionId })).events, history.events)
@@ -213,7 +253,7 @@ try {
   // append seed/permission metadata. The migrated history prefix stays exact.
   assert.deepEqual(reopenedLegacy.events.slice(0, migrated.events.length), migrated.events)
   assert.deepEqual(await readFile(legacyFile), legacyBytes)
-  console.log('Real DSH smoke passed: discovery, token authentication, create/list/history, V2 migration, and prepared projections after restart')
+  console.log('Real DSH smoke passed: discovery, token authentication, create/list/history, deferred and immediate deletion, V2 migration, and prepared projections after restart')
   succeeded = true
 } catch (error) {
   console.error(hostLog)
