@@ -2166,6 +2166,21 @@ export function App(): React.JSX.Element {
               })}
             </div>
           )}
+          <div className="composer-toolbar">
+            <ModelPicker
+              catalog={modelCatalog}
+              loading={modelCatalogLoading}
+              loadError={modelCatalogError}
+              selection={modelSelection}
+              open={modelMenuOpen}
+              disabled={!sessionReady || busy}
+              busy={modelBusy}
+              copy={copy}
+              onToggle={toggleModelMenu}
+              onClose={closeModelMenu}
+              onSelect={(selection) => { void selectModel(selection) }}
+            />
+          </div>
           <textarea
             value={input}
             onChange={(e) => {
@@ -2206,19 +2221,6 @@ export function App(): React.JSX.Element {
                 title={imageLimits === null ? copy.app.imageUnavailable : copy.app.addImages}
                 onClick={() => fileInputRef.current?.click()}
               ><AttachmentIcon /></button>
-              <ModelPicker
-                catalog={modelCatalog}
-                loading={modelCatalogLoading}
-                loadError={modelCatalogError}
-                selection={modelSelection}
-                open={modelMenuOpen}
-                disabled={!sessionReady || busy}
-                busy={modelBusy}
-                copy={copy}
-                onToggle={toggleModelMenu}
-                onClose={closeModelMenu}
-                onSelect={(selection) => { void selectModel(selection) }}
-              />
               <span>{copy.app.composerHelp}</span>
             </span>
             {working ? (

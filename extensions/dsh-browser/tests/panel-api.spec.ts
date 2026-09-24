@@ -61,6 +61,33 @@ describe('panel protocol', () => {
     }))
   })
 
+  it('unwraps gateway envelopes but hands bridge-internal flat results through untouched', async () => {
+    let receive: ((message: unknown) => void) | undefined
+    const port = {
+      postMessage: vi.fn(),
+      onMessage: { addListener: vi.fn((listener: (message: unknown) => void) => { receive = listener }) },
+      onDisconnect: { addListener: vi.fn() },
+    }
+    vi.stubGlobal('chrome', { runtime: { connect: vi.fn(() => port) } })
+    const ids = ['11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222']
+    vi.spyOn(crypto, 'randomUUID').mockImplementation(() => ids.shift() as `${string}-${string}-${string}-${string}-${string}`)
+    const api = connectPanel()
+
+    const gateway = api.rpc('session.list', {})
+    receive?.({
+      type: 'rpc.result', id: '11111111-1111-4111-8111-111111111111', ok: true,
+      result: { type: 'server-response', rpcId: 'x', result: { ok: true, value: { items: [] } } },
+    })
+    await expect(gateway).resolves.toEqual({ items: [] })
+
+    const internal = api.rpc('bridge.session.purge', { sessionId: 'session-1' })
+    receive?.({
+      type: 'rpc.result', id: '22222222-2222-4222-8222-222222222222', ok: true,
+      result: { purged: false, deferred: true },
+    })
+    await expect(internal).resolves.toEqual({ purged: false, deferred: true })
+  })
+
   it('delivers approval requests, resolution events, and correlated decisions', () => {
     let receive: ((message: unknown) => void) | undefined
     const postMessage = vi.fn()

@@ -1601,6 +1601,13 @@ textarea:focus-visible {
   color: var(--faint);
 }
 
+.composer-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px 0;
+}
+
 .model-picker {
   position: relative;
   display: flex;
@@ -1609,42 +1616,50 @@ textarea:focus-visible {
   align-items: center;
 }
 
-.composer-actions button.model-chip {
+.model-picker button.model-chip {
   display: inline-flex;
   width: auto;
-  max-width: 190px;
+  max-width: 100%;
   height: 24px;
   align-items: center;
   gap: 3px;
   padding: 0 6px 0 8px;
-  border-color: var(--line);
+  border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--canvas-deep);
   color: var(--muted);
   box-shadow: none;
+  cursor: pointer;
+  font: inherit;
   font-size: calc(10.5px * var(--ui-scale));
   font-weight: 600;
   line-height: 1;
+  transition: background-color 150ms ease, border-color 150ms ease;
 }
 
-.composer-actions button.model-chip:hover:not(:disabled),
-.composer-actions button.model-chip[aria-expanded="true"] {
+.model-picker button.model-chip svg {
+  width: 12px;
+  height: 12px;
+  flex: 0 0 auto;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+}
+
+.model-picker button.model-chip:hover:not(:disabled),
+.model-picker button.model-chip[aria-expanded="true"] {
   border-color: var(--line-strong);
   background: var(--blue-wash);
   color: var(--blue-ink);
   transform: none;
 }
 
-.composer-actions button.model-chip:disabled {
+.model-picker button.model-chip:disabled {
   border-color: transparent;
   background: transparent;
   color: var(--faint);
-}
-
-.composer-actions button.model-chip svg {
-  width: 12px;
-  height: 12px;
-  flex: 0 0 auto;
 }
 
 .model-chip-label {
@@ -1706,7 +1721,7 @@ textarea:focus-visible {
   text-transform: none;
 }
 
-.composer-actions button.model-option {
+.model-menu button.model-option {
   display: flex;
   width: 100%;
   height: auto;
@@ -1714,29 +1729,32 @@ textarea:focus-visible {
   align-items: flex-start;
   gap: 1px;
   padding: 6px 8px;
-  border-color: transparent;
+  border: 1px solid transparent;
   border-radius: 8px;
   background: transparent;
   color: var(--ink);
   box-shadow: none;
+  cursor: pointer;
+  font: inherit;
   text-align: left;
 }
 
-.composer-actions button.model-option:hover:not(:disabled) {
+.model-menu button.model-option:hover:not(:disabled) {
   border-color: transparent;
   background: var(--canvas-deep);
   transform: none;
 }
 
-.composer-actions button.model-option.selected {
+.model-menu button.model-option.selected {
   background: var(--blue-wash);
   color: var(--blue-ink);
 }
 
-.composer-actions button.model-option:disabled {
+.model-menu button.model-option:disabled {
   border-color: transparent;
   background: transparent;
   color: var(--faint);
+  cursor: default;
 }
 
 .model-option-name {
@@ -1762,26 +1780,28 @@ textarea:focus-visible {
   padding: 2px 6px 4px;
 }
 
-.composer-actions button.model-effort {
+.model-menu button.model-effort {
   width: auto;
   height: 22px;
   padding: 0 8px;
-  border-color: var(--line);
+  border: 1px solid var(--line);
   border-radius: 999px;
   background: transparent;
   color: var(--muted);
   box-shadow: none;
+  cursor: pointer;
+  font: inherit;
   font-size: calc(10.5px * var(--ui-scale));
 }
 
-.composer-actions button.model-effort:hover:not(:disabled) {
+.model-menu button.model-effort:hover:not(:disabled) {
   border-color: var(--line-strong);
   background: var(--canvas-deep);
   color: var(--blue-ink);
   transform: none;
 }
 
-.composer-actions button.model-effort.selected {
+.model-menu button.model-effort.selected {
   border-color: var(--blue);
   background: var(--blue-wash);
   color: var(--blue-ink);

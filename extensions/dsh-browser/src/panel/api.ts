@@ -172,9 +172,14 @@ export function connectPanel(): PanelApi {
         // The bridge relays the gateway's ServerResponse envelope verbatim
         // ({ type, rpcId, result: { ok, value | error } }); unwrap the value
         // so callers get the business payload, and surface business errors.
+        // Bridge-internal methods (bridge.session.purge) answer with a flat
+        // result instead of that envelope; hand it over untouched.
         const envelope = msg.result as { result?: { ok?: boolean; value?: unknown; error?: RpcFailurePayload } } | undefined
-        const business = envelope?.result
-        if (msg.ok && business?.ok !== false) entry.resolve(business?.value)
+        const business = typeof envelope?.result === 'object' && envelope.result !== null && 'ok' in envelope.result
+          ? envelope.result
+          : undefined
+        if (msg.ok && business === undefined) entry.resolve(msg.result)
+        else if (msg.ok && business?.ok !== false) entry.resolve(business?.value)
         else entry.reject(panelRpcError(
           business?.ok === false ? business.error : msg.error,
           getUiLocale() === 'zh' ? 'RPC 请求失败' : 'RPC request failed',
