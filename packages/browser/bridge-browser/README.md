@@ -22,29 +22,16 @@ Workspace grouping is best-effort. If the composition has no workspace domain, d
 
 ## Usage
 
-The remote installer downloads an installer-managed workspace, builds the plugin, and registers its official bundle in the local dsh `web` profile. It requires neither Git nor a local clone:
+Install the release `.tgz` into the dsh `web` profile:
 
-```sh
-curl -fsSL https://raw.githubusercontent.com/Onenightcarnival/dsh-browser/refs/heads/main/scripts/install.sh | bash
-cd ~/.dsh/dsh-browser && pnpm start
-```
+- DeepSeek Harness Desktop: 插件 → 配置中心… → 插件 → 「从 .tgz 安装」, then restart the app.
+- dsh CLI: `npx @deepseek-ai/dsh@0.1.5-rc.2 plugin --profile web add file:<path to .tgz>`, then `npx @deepseek-ai/dsh@0.1.5-rc.2 web`.
 
-On Windows, run the PowerShell installer instead:
+Both register the package's `dsh.bundle` layer ([`cordis.patch.yml`](cordis.patch.yml)), so `dsh web` mounts the bridge without further options. A checkout produces the same `.tgz` with `pnpm run package:desktop` at the repository root.
 
-```powershell
-$s="$env:TEMP\dsh-install.ps1"; irm https://raw.githubusercontent.com/Onenightcarnival/dsh-browser/refs/heads/main/scripts/install.ps1 -OutFile $s; powershell -NoProfile -ExecutionPolicy Bypass -File $s
-cd $HOME\.dsh\dsh-browser; pnpm start
-```
+The workspace pins dsh 0.1.5-rc.2, the minimum supported runtime. Older DSH releases are not supported.
 
-Developers can instead clone the repository and run `./scripts/install.sh` followed by `pnpm start` from that checkout. The local mode uses the current branch without downloading or overwriting source files. Both installation modes register the same profile bundle; build tools resolve only from the selected workspace and never from a parent checkout or parent `node_modules` directory.
-
-The workspace pins dsh 0.1.5-rc.2, the minimum supported runtime. Older DSH releases are not supported:
-
-```sh
-npx @deepseek-ai/dsh@0.1.5-rc.2 web
-```
-
-The installer copies the unpacked extension to `~/.dsh/browser-extension` and opens `chrome://extensions`. Load that stable directory in Chrome and use the side panel. Loopback connections are discovered automatically and require no token entry; non-loopback deployments still require the configured bearer token.
+The extension is installed separately from the release zip (see the [root README](../../README.md#install)). Loopback connections are discovered automatically and require no token entry; non-loopback deployments still require the configured bearer token.
 
 ## Security model
 

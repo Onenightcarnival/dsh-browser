@@ -53,49 +53,15 @@ pnpm --filter dsh-browser-extension run test
 
 ## 安装与使用
 
-推荐的零配置命令无需安装 Git，也无需提前 clone：
+1. **安装 Release 文件**：到 [Releases](https://github.com/Onenightcarnival/dsh-browser/releases) 下载。桥插件 `.tgz` 装进 dsh `web` profile（DeepSeek Harness Desktop：「插件 → 配置中心… → 插件 → 从 .tgz 安装」；命令行：`npx @deepseek-ai/dsh@0.1.5-rc.2 plugin --profile web add file:<路径>`）；Chrome zip 解压后在 `chrome://extensions` 开启开发者模式并「加载已解压的扩展程序」。步骤见[根 README](../../README.zh.md#安装)。
 
-1. **构建并安装扩展**：
-
-   ```sh
-   curl -fsSL https://raw.githubusercontent.com/Onenightcarnival/dsh-browser/refs/heads/main/scripts/install.sh | bash
-   ```
-
-   Windows 请改在 PowerShell 中运行：
-
-   ```powershell
-   $s="$env:TEMP\dsh-install.ps1"; irm https://raw.githubusercontent.com/Onenightcarnival/dsh-browser/refs/heads/main/scripts/install.ps1 -OutFile $s; powershell -NoProfile -ExecutionPolicy Bypass -File $s
-   ```
-
-   脚本会把托管 workspace 下载到 `~/.dsh/dsh-browser`，构建桥插件，把它的官方 bundle 注册到本机 dsh 的 `web` profile，再构建扩展并把产物复制到稳定目录 `~/.dsh/browser-extension`，然后打开 `chrome://extensions`。开启开发者模式，选择「加载已解压的扩展程序」，加载扩展目录。再次运行该命令会更新托管安装。
-
-   clone 得到的 checkout 也使用同一个安装器，而且不会下载或覆盖源码：
-
-   ```sh
-   git clone https://github.com/Onenightcarnival/dsh-browser.git
-   cd dsh-browser
-   ./scripts/install.sh
-   ```
-
-   Windows checkout 请运行 `.\scripts\install.ps1`。路径可以包含空格：安装器通过 profile 内的目录联接注册插件，不会把 checkout 的绝对路径写入 pnpm link 规格。
-
-2. **启动 dsh 并挂载桥插件**。可以使用 workspace 固定的运行时：
-
-   ```sh
-   cd ~/.dsh/dsh-browser && pnpm start
-   ```
-
-   如果使用 clone，请改为在仓库根目录运行 `pnpm start`。
-
-   或使用受支持的精确公开版本：
+2. **启动 dsh 并挂载桥插件**。DeepSeek Harness Desktop 启动时自动完成。源码 checkout 在仓库根目录运行 `pnpm start`，或使用受支持的精确公开版本：
 
    ```sh
    npx @deepseek-ai/dsh@0.1.5-rc.2 web
    ```
 
-   两种命令都会从本机 `web` profile 加载同一个 bundle。默认端口为 3080；如被占用，可追加 `--port <port>`。
-
-   **DSH Desktop 用户**：桌面版默认让系统随机分配本地 Web 端口（`dsh-desktop.port: 0`），自动探测无法预知随机端口。请在桌面版设置中把端口固定为 `43189`（见 [deepseek-harness-desktop 用户指南](https://github.com/anywhere-labs/deepseek-harness-desktop/blob/master/docs/user-guide.md)），扩展的自动探测会覆盖该端口；或直接在侧栏设置中手动填写 `http://127.0.0.1:<端口>`。
+   两种方式都从本机 `web` profile 加载同一个 bundle。默认端口为 3080；如被占用，可追加 `--port <port>`。自动探测覆盖 3080/3081/3090、桥插件的发现信标窗口 43189–43192（随机端口的桌面版就靠它被找到）和旧版桌面端口 14389；其它地址在侧栏设置里填 `http://127.0.0.1:<端口>`。
 
    加载或重新加载扩展本身是被动的：只有打开侧栏后，扩展才会探测本机端口并创建 WebSocket。用户已建立的健康连接可在侧栏关闭后继续用于后台审批；但连接一旦掉线或被另一浏览器替换，没有打开侧栏时就不会重连。
 

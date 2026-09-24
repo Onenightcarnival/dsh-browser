@@ -14,49 +14,40 @@ This repository is a fork of [Lum1104/dsh-browser](https://github.com/Lum1104/ds
 - a fixed-port discovery beacon lets the extension find a desktop app that starts dsh on a random port;
 - releases ship a `.tgz` for the desktop app's plugin manager plus a Chrome extension zip.
 
-Setup is in [Using with DeepSeek Harness Desktop](#using-with-deepseek-harness-desktop).
+Installation: [Install](#install). Desktop specifics: [Using with DeepSeek Harness Desktop](#using-with-deepseek-harness-desktop).
 
 Browser operation remains text-only: pages become structured text with a numbered inventory of interactive elements, and the model addresses those elements by number. dsh 0.1.5 multimodal chat is separate from that page channel—the side panel accepts PNG, JPEG, WebP, and GIF attachments when the host advertises image support, while browser tools still never capture screenshots.
 
 > [!IMPORTANT]
 > The workspace pins dsh 0.1.5-rc.2, the minimum supported runtime. Older DSH releases are not supported.
 
-## Quick install
+## Install
 
-The standard `dsh plugin` command alone cannot install this project. The integration contains both a dsh bridge plugin and a browser extension. The one-line installer currently sets up the Chrome build.
+Each [release](https://github.com/Onenightcarnival/dsh-browser/releases) ships two files:
 
-macOS and Linux:
+| File | Contents |
+|---|---|
+| `onenightcarnival-dsh-bridge-browser-<version>.tgz` | bridge plugin for the dsh `web` profile |
+| `dsh-browser-extension-chrome-<version>.zip` | built Chrome extension, loaded unpacked |
 
-```sh
-curl -fsSL https://raw.githubusercontent.com/Onenightcarnival/dsh-browser/refs/heads/main/scripts/install.sh | bash
-```
+1. **Bridge plugin**
+   - DeepSeek Harness Desktop: 插件 → 配置中心… → 插件 → 「从 .tgz 安装」, pick the `.tgz`, restart when prompted.
+   - dsh CLI: `npx @deepseek-ai/dsh@0.1.5-rc.2 plugin --profile web add file:<path to .tgz>`, then start (or restart) `dsh web`.
+2. **Chrome extension**: unzip into a folder you will keep, open `chrome://extensions`, enable Developer mode, choose "Load unpacked" and select that folder.
+3. Open any `http(s)` page and click the DeepSeek whale icon. The side panel shows **Connected**.
 
-Windows, in PowerShell:
+**Update**: install the new `.tgz` the same way, replace the extension folder's contents with the new zip, click **Reload** on the extension card in `chrome://extensions`, then restart dsh. The side panel's Updates card compares the installed version with the repository and links to Releases.
 
-```powershell
-$s="$env:TEMP\dsh-install.ps1"; irm https://raw.githubusercontent.com/Onenightcarnival/dsh-browser/refs/heads/main/scripts/install.ps1 -OutFile $s; powershell -NoProfile -ExecutionPolicy Bypass -File $s
-```
-
-When the installer opens `chrome://extensions`, follow its instructions to load or reload **dsh Browser Assistant**. If dsh is already running, restart it after installation. See [Detailed installation and usage](#detailed-installation-and-usage) for prerequisites, startup commands, updates, and developer installation.
+Firefox has no packaged build; see [Firefox source build](#firefox-source-build).
 
 > [!IMPORTANT]
-> The unscoped [`dsh-browser`](https://www.npmjs.com/package/dsh-browser) package on npm belongs to a different project and is not affiliated with this repository. CLI users should use the installer above; desktop users see the next section.
+> The unscoped [`dsh-browser`](https://www.npmjs.com/package/dsh-browser) package on npm belongs to a different project and is not affiliated with this repository. Install from Releases only.
 
 ## Using with DeepSeek Harness Desktop
 
 The desktop app starts dsh on a random port. The bridge plugin therefore runs a discovery beacon: a loopback listener on `127.0.0.1:43189` (falling back through 43192) that answers only `/ext/bridge-config` with the real bridge URL. The extension probes that port window, and the desktop app needs no change. `discoveryPort: 0` disables the beacon.
 
-### Install
-
-1. Get `onenightcarnival-dsh-bridge-browser-<version>.tgz` and `dsh-browser-extension-chrome-<version>.zip` from [Releases](https://github.com/Onenightcarnival/dsh-browser/releases), or build them from a checkout:
-
-   ```sh
-   pnpm install && pnpm run build && pnpm run package:desktop   # → dist-desktop/
-   ```
-
-2. Desktop app: 插件 → 配置中心… → 插件 → 「从 .tgz 安装」, pick the `.tgz`, restart when prompted. The app runs `dsh plugin --profile web add file:<path>`, which installs the plugin's dependencies and registers its `dsh.bundle` layer.
-3. Chrome: unzip the extension into a folder you will keep, open `chrome://extensions`, enable Developer mode, and choose "Load unpacked" on that folder.
-4. Open any page and click the DeepSeek whale icon. The side panel shows **Connected**; sessions created from the extension land in `~/.dsh/browser-sessions` and appear in the desktop app's session list.
+Install both files as described in [Install](#install).
 
 ### Compatibility
 
@@ -104,8 +95,8 @@ The paired Playwright / extension duration ratio was **1.24** (95% CI **1.16–1
 packages/browser/bridge-browser/
   cordis.patch.yml
 extensions/dsh-browser/
-scripts/install.sh
-scripts/install.ps1
+scripts/package-desktop.mjs
+scripts/version.mjs
 ```
 
 ## Why this design
@@ -116,39 +107,19 @@ scripts/install.ps1
 - **A narrow privacy boundary**: passwords and payment-card values are always rendered as `••••` and never leave the page.
 - **A guarded bridge**: authenticated handshakes protect remote connections, privileged gateway methods reject non-loopback callers, and the extension binds tools to one user-controlled tab.
 
-## Detailed installation and usage
+## Building from source
 
-Requirements: Node.js `^22.19` or `>=24`, Corepack/pnpm, and Chrome 116+ or Firefox 140+. Windows additionally needs Windows PowerShell 5.1, which ships with Windows, or PowerShell 7+.
+Requirements: Node.js `^22.19` or `>=24`, Corepack/pnpm, and Chrome 116+ or Firefox 140+.
 
-### Install or update
-
-For a managed installation, run:
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/Onenightcarnival/dsh-browser/refs/heads/main/scripts/install.sh | bash
-```
-
-or, on Windows:
-
-```powershell
-$s="$env:TEMP\dsh-install.ps1"; irm https://raw.githubusercontent.com/Onenightcarnival/dsh-browser/refs/heads/main/scripts/install.ps1 -OutFile $s; powershell -NoProfile -ExecutionPolicy Bypass -File $s
-```
-
-The installer downloads `main`, builds and registers the bridge plugin, builds the Chrome extension into `~/.dsh/browser-extension`, and opens `chrome://extensions`. On the first install, load that directory as an unpacked extension; on updates, click **Reload**. Restart dsh if it is already running.
-
-`scripts/install.sh` covers macOS and Linux, and `scripts/install.ps1` covers Windows; both write the same managed workspace and the same install metadata. The installer copies the extension path to the clipboard when a clipboard tool is available (`pbcopy`, `wl-copy`, `xclip`, `xsel`, or PowerShell's `Set-Clipboard`), and prints the path either way. When no Chrome or Chromium install is found, it prints the command that installs one; set `DSH_INSTALL_BROWSER=1` to let the installer attempt that install itself.
-
-The Windows command downloads `install.ps1` and runs it rather than piping it into `Invoke-Expression`: the script is UTF-8 with a byte order mark so Windows PowerShell renders its Chinese output, and `Invoke-Expression` rejects a leading mark. Local checkout paths may contain spaces; the installer registers the bridge through a profile-local directory junction so the package spec never contains the absolute Windows path.
-
-To install the current branch from a source checkout instead:
+### Chrome build
 
 ```sh
 git clone https://github.com/Onenightcarnival/dsh-browser.git
 cd dsh-browser
-./scripts/install.sh
+pnpm install && pnpm run build && pnpm run package:desktop
 ```
 
-On Windows, run `.\scripts\install.ps1` from the checkout instead. After pulling or switching revisions, rerun the installer and reload the extension.
+`dist-desktop/` then holds the same `.tgz` and zip a release ships; install them as in [Install](#install). `pnpm run build` alone leaves the loadable extension in `extensions/dsh-browser/dist/`.
 
 ### Firefox source build
 
@@ -162,12 +133,6 @@ pnpm --filter dsh-browser-extension run build:firefox
 The bridge address is still auto-discovered. Firefox's `moz-extension://` UUID does not authenticate an add-on, so copy the bearer token from `~/.dsh/ext-bridge-token` into the extension settings (the dsh startup log reports that file's path). Signed distribution can package the same `dist-firefox/` output.
 
 ### Start and use
-
-Start the managed installation with:
-
-```sh
-cd ~/.dsh/dsh-browser && pnpm start
-```
 
 From a source checkout, run `pnpm start` in the repository root. The exact supported public runtime is:
 
@@ -208,7 +173,7 @@ pnpm --filter dsh-browser-extension run test
 
 Notes:
 
-- The bridge plugin must have a built `lib/` before startup because the loader consumes it; both `scripts/install.sh` and the root `pnpm run build` build the plugin before the extension.
+- The bridge plugin must have a built `lib/` before startup because the loader consumes it; the root `pnpm run build` builds the plugin before the extension.
 - The bridge build copies its browser client with Node.js `copyFileSync`, so the same package script works without a Unix `cp` executable.
 - The dependencies of `@deepseek-ai/dsh` and the bridge plugin are pinned to the same tested public release line. An upgrade must update the manifests and lockfile together and rerun the root checks.
 

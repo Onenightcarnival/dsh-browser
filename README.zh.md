@@ -14,49 +14,40 @@
 - 固定端口的发现信标，让扩展找到以随机端口启动 dsh 的桌面版；
 - 发布页提供桌面版插件管理器可直接安装的 `.tgz` 与 Chrome 扩展 zip。
 
-安装方法见[在 DeepSeek Harness Desktop 中使用](#在-deepseek-harness-desktop-中使用)。
+安装方法见[安装](#安装)，桌面版相关说明见[在 DeepSeek Harness Desktop 中使用](#在-deepseek-harness-desktop-中使用)。
 
 浏览器操作仍采用纯文本设计：页面会转换为结构化文本和带编号的交互元素清单，模型通过编号定位元素。dsh 0.1.5 的多模态对话走独立通道——宿主声明图片能力时，侧栏可发送 PNG、JPEG、WebP 和 GIF；浏览器工具本身仍不会截取页面截图。
 
 > [!IMPORTANT]
 > 当前工作区固定使用 dsh 0.1.5-rc.2，也是最低支持版本；不再支持旧版 DSH。
 
-## 快速安装
+## 安装
 
-本项目不能只使用标准的 `dsh plugin` 命令安装。它同时包含 dsh bridge plugin 和浏览器扩展。一行安装器目前会安装 Chrome 构建。
+每个 [Release](https://github.com/Onenightcarnival/dsh-browser/releases) 附带两个文件：
 
-macOS 与 Linux：
+| 文件 | 内容 |
+|---|---|
+| `onenightcarnival-dsh-bridge-browser-<版本>.tgz` | 装进 dsh `web` profile 的桥插件 |
+| `dsh-browser-extension-chrome-<版本>.zip` | 构建好的 Chrome 扩展，以解压目录加载 |
 
-```sh
-curl -fsSL https://raw.githubusercontent.com/Onenightcarnival/dsh-browser/refs/heads/main/scripts/install.sh | bash
-```
+1. **桥插件**
+   - DeepSeek Harness Desktop：「插件 → 配置中心… → 插件 → 从 .tgz 安装」，选中 `.tgz`，按提示重启。
+   - dsh 命令行：`npx @deepseek-ai/dsh@0.1.5-rc.2 plugin --profile web add file:<.tgz 路径>`，然后启动（或重启）`dsh web`。
+2. **Chrome 扩展**：把 zip 解压到一个不会删的目录，打开 `chrome://extensions`，开启「开发者模式」，「加载已解压的扩展程序」选中该目录。
+3. 打开任意 `http(s)` 页面，点击 DeepSeek 鲸鱼图标。侧边栏显示**已连接**。
 
-Windows（PowerShell）：
+**更新**：用同样方式安装新的 `.tgz`，用新 zip 的内容替换扩展目录，在 `chrome://extensions` 的扩展卡片上点**重新加载**，再重启 dsh。侧边栏的「软件更新」卡片会把已安装版本和仓库版本比较，并链接到 Releases。
 
-```powershell
-$s="$env:TEMP\dsh-install.ps1"; irm https://raw.githubusercontent.com/Onenightcarnival/dsh-browser/refs/heads/main/scripts/install.ps1 -OutFile $s; powershell -NoProfile -ExecutionPolicy Bypass -File $s
-```
-
-安装器打开 `chrome://extensions` 后，请按提示加载或重新加载 **dsh 浏览器助手**。如果 dsh 已经在运行，安装完成后请重启。前置要求、启动命令、更新方式和开发者安装详见[详细安装与使用](#详细安装与使用)。
+Firefox 没有打包产物，见 [Firefox 源码构建](#firefox-源码构建)。
 
 > [!IMPORTANT]
-> npm 上未加 scope 的 [`dsh-browser`](https://www.npmjs.com/package/dsh-browser) 包属于另一个项目，与本仓库无关。命令行用户请使用上方安装器；桌面版用户见下一节。
+> npm 上未加 scope 的 [`dsh-browser`](https://www.npmjs.com/package/dsh-browser) 包属于另一个项目，与本仓库无关。请只从 Releases 安装。
 
 ## 在 DeepSeek Harness Desktop 中使用
 
 桌面版以随机端口启动 dsh。桥插件因此运行一个发现信标：监听 `127.0.0.1:43189`（被占时顺延到 43192）的回环端口，只回 `/ext/bridge-config`，返回真实的桥地址。扩展探测这个端口窗口，桌面版无需改动。`discoveryPort: 0` 关闭信标。
 
-### 安装
-
-1. 从 [Releases](https://github.com/Onenightcarnival/dsh-browser/releases) 下载 `onenightcarnival-dsh-bridge-browser-<版本>.tgz` 和 `dsh-browser-extension-chrome-<版本>.zip`，或在源码 checkout 里构建：
-
-   ```sh
-   pnpm install && pnpm run build && pnpm run package:desktop   # → dist-desktop/
-   ```
-
-2. 桌面版：「插件 → 配置中心… → 插件 → 从 .tgz 安装」，选中 `.tgz`，按提示重启。桌面版执行 `dsh plugin --profile web add file:<路径>`，安装插件依赖并注册其 `dsh.bundle` 层。
-3. Chrome：把 zip 解压到一个不会删的目录，打开 `chrome://extensions`，开启「开发者模式」，「加载已解压的扩展程序」选中该目录。
-4. 打开任意网页，点击 DeepSeek 鲸鱼图标。侧边栏显示**已连接**；扩展创建的会话落在 `~/.dsh/browser-sessions`，也出现在桌面版的会话列表里。
+两个文件的安装方法见[安装](#安装)。
 
 ### 兼容性
 
@@ -104,8 +95,8 @@ Playwright / 扩展的配对耗时比为 **1.24**（95% CI **1.16–1.34**）：
 packages/browser/bridge-browser/
   cordis.patch.yml
 extensions/dsh-browser/
-scripts/install.sh
-scripts/install.ps1
+scripts/package-desktop.mjs
+scripts/version.mjs
 ```
 
 ## 为什么这样设计
@@ -116,39 +107,19 @@ scripts/install.ps1
 - **收窄隐私边界**：密码和支付卡字段始终显示为 `••••`，字段值不会离开页面。
 - **受保护的桥连接**：远程连接使用认证握手，特权网关方法拒绝非回环调用方，扩展把工具绑定到一个由用户控制的标签页。
 
-## 详细安装与使用
+## 从源码构建
 
-前置要求：Node.js `^22.19` 或 `>=24`、Corepack/pnpm，以及 Chrome 116+ 或 Firefox 140+。Windows 还需要系统自带的 Windows PowerShell 5.1，或 PowerShell 7+。
+前置要求：Node.js `^22.19` 或 `>=24`、Corepack/pnpm，以及 Chrome 116+ 或 Firefox 140+。
 
-### 安装或更新
-
-托管安装请运行：
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/Onenightcarnival/dsh-browser/refs/heads/main/scripts/install.sh | bash
-```
-
-Windows 请运行：
-
-```powershell
-$s="$env:TEMP\dsh-install.ps1"; irm https://raw.githubusercontent.com/Onenightcarnival/dsh-browser/refs/heads/main/scripts/install.ps1 -OutFile $s; powershell -NoProfile -ExecutionPolicy Bypass -File $s
-```
-
-安装器会下载 `main`、构建并注册桥插件、把 Chrome 扩展构建到 `~/.dsh/browser-extension`，然后打开 `chrome://extensions`。首次安装时，请把该目录作为已解压扩展加载；更新时点击**重新加载**。如果 dsh 已在运行，请重启。
-
-`scripts/install.sh` 覆盖 macOS 与 Linux，`scripts/install.ps1` 覆盖 Windows；两者写入同一个托管工作区和同一份安装元数据。当系统提供剪贴板工具（`pbcopy`、`wl-copy`、`xclip`、`xsel` 或 PowerShell 的 `Set-Clipboard`）时，安装器会把扩展路径复制到剪贴板；无论是否复制成功都会打印该路径。若未检测到 Chrome/Chromium，安装器会打印对应的安装命令；设置 `DSH_INSTALL_BROWSER=1` 可让安装器尝试自动安装。
-
-Windows 命令先下载 `install.ps1` 再执行，而不是管道给 `Invoke-Expression`：脚本是带 BOM 的 UTF-8，Windows PowerShell 依赖 BOM 才能正确显示中文，而 `Invoke-Expression` 无法处理开头的 BOM。本地 checkout 路径可以包含空格；安装器通过 profile 内的目录联接注册桥插件，因此包规格中不会出现 Windows 绝对路径。
-
-如需从源码 checkout 安装当前分支：
+### Chrome 构建
 
 ```sh
 git clone https://github.com/Onenightcarnival/dsh-browser.git
 cd dsh-browser
-./scripts/install.sh
+pnpm install && pnpm run build && pnpm run package:desktop
 ```
 
-Windows 请在 checkout 中运行 `.\scripts\install.ps1`。拉取或切换版本后，请重新运行安装器并重新加载扩展。
+`dist-desktop/` 里就是 Release 附带的同一份 `.tgz` 和 zip，按[安装](#安装)一节安装即可。只跑 `pnpm run build` 时，可加载的扩展在 `extensions/dsh-browser/dist/`。
 
 ### Firefox 源码构建
 
@@ -162,12 +133,6 @@ pnpm --filter dsh-browser-extension run build:firefox
 桥地址仍会自动探测。Firefox 的 `moz-extension://` UUID 不能证明扩展身份，因此需要把 `~/.dsh/ext-bridge-token` 中的 bearer token 填入扩展设置（dsh 启动日志会报告该文件路径）。签名发布时可直接使用同一份 `dist-firefox/` 产物。
 
 ### 启动与使用
-
-启动托管安装：
-
-```sh
-cd ~/.dsh/dsh-browser && pnpm start
-```
 
 使用源码 checkout 时，请在仓库根目录运行 `pnpm start`。受支持的精确公开版本为：
 
@@ -208,7 +173,7 @@ pnpm --filter dsh-browser-extension run test
 
 注意：
 
-- 启动前桥接插件必须已有 `lib/` 供 Loader 加载；`scripts/install.sh` 和根目录 `pnpm run build` 都会先构建插件再构建扩展。
+- 启动前桥接插件必须已有 `lib/` 供 Loader 加载；根目录 `pnpm run build` 会先构建插件再构建扩展。
 - 桥构建使用 Node.js `copyFileSync` 复制浏览器客户端，因此同一条包脚本不依赖 Unix `cp` 命令。
 - `@deepseek-ai/dsh` 与桥接插件的依赖固定在同一条经过验证的公开发布线上；升级时必须同时更新 manifest、锁文件并重跑根目录检查。
 

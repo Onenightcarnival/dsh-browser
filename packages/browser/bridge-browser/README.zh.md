@@ -22,29 +22,16 @@ dsh 的**浏览器操作桥**：在宿主 webserver 上挂载一个 **token 认�
 
 ## 使用
 
-远程安装器会下载一个由脚本托管的 workspace，构建插件，并将它的官方 bundle 注册到本机 dsh 的 `web` profile。该方式无需 Git，也无需提前 clone：
+把 Release 的 `.tgz` 装进 dsh `web` profile：
 
-```sh
-curl -fsSL https://raw.githubusercontent.com/Onenightcarnival/dsh-browser/refs/heads/main/scripts/install.sh | bash
-cd ~/.dsh/dsh-browser && pnpm start
-```
+- DeepSeek Harness Desktop：「插件 → 配置中心… → 插件 → 从 .tgz 安装」，然后重启应用。
+- dsh 命令行：`npx @deepseek-ai/dsh@0.1.5-rc.2 plugin --profile web add file:<.tgz 路径>`，然后 `npx @deepseek-ai/dsh@0.1.5-rc.2 web`。
 
-Windows 请改用 PowerShell 安装器：
+两种方式都会注册本包的 `dsh.bundle` 层（[`cordis.patch.yml`](cordis.patch.yml)），`dsh web` 无需额外参数即可挂载桥。源码 checkout 在仓库根目录运行 `pnpm run package:desktop` 可得到同一份 `.tgz`。
 
-```powershell
-$s="$env:TEMP\dsh-install.ps1"; irm https://raw.githubusercontent.com/Onenightcarnival/dsh-browser/refs/heads/main/scripts/install.ps1 -OutFile $s; powershell -NoProfile -ExecutionPolicy Bypass -File $s
-cd $HOME\.dsh\dsh-browser; pnpm start
-```
+当前工作区固定使用 dsh 0.1.5-rc.2，也是最低支持版本；不再支持旧版 DSH。
 
-开发者也可以 clone 仓库，在 checkout 中依次运行 `./scripts/install.sh` 和 `pnpm start`。本地模式直接使用当前分支，不会下载或覆盖源码。两种安装模式都会注册同一个 profile bundle；构建工具只从选定的 workspace 解析，绝不读取父 checkout 或父目录的 `node_modules`。
-
-当前工作区固定使用 dsh 0.1.5-rc.2，也是最低支持版本；不再支持旧版 DSH：
-
-```sh
-npx @deepseek-ai/dsh@0.1.5-rc.2 web
-```
-
-安装器会把已解压扩展复制到 `~/.dsh/browser-extension` 并打开 `chrome://extensions`。在 Chrome 中加载这个稳定目录，然后使用侧边栏。扩展会自动发现回环连接，无需输入 token；非回环部署仍需要配置的 bearer token。
+扩展另从 Release 的 zip 安装（见[根 README](../../README.zh.md#安装)）。扩展会自动发现回环连接，无需输入 token；非回环部署仍需要配置的 bearer token。
 
 ## 安全模型
 

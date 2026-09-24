@@ -53,49 +53,15 @@ Run these commands from the repository root. Chrome outputs to `extensions/dsh-b
 
 ## Install and use
 
-The recommended zero-configuration command does not require Git or a local clone:
+1. **Install the release files** from [Releases](https://github.com/Onenightcarnival/dsh-browser/releases): the bridge `.tgz` into the dsh `web` profile (DeepSeek Harness Desktop: 插件 → 配置中心… → 插件 → 「从 .tgz 安装」; CLI: `npx @deepseek-ai/dsh@0.1.5-rc.2 plugin --profile web add file:<path>`), and the Chrome zip unpacked via `chrome://extensions` → Developer mode → Load unpacked. Steps: [root README](../../README.md#install).
 
-1. **Build and install the extension**:
-
-   ```sh
-   curl -fsSL https://raw.githubusercontent.com/Onenightcarnival/dsh-browser/refs/heads/main/scripts/install.sh | bash
-   ```
-
-   On Windows, run this in PowerShell instead:
-
-   ```powershell
-   $s="$env:TEMP\dsh-install.ps1"; irm https://raw.githubusercontent.com/Onenightcarnival/dsh-browser/refs/heads/main/scripts/install.ps1 -OutFile $s; powershell -NoProfile -ExecutionPolicy Bypass -File $s
-   ```
-
-   The script downloads a managed workspace to `~/.dsh/dsh-browser`, builds the bridge plugin, registers its official bundle in the local dsh `web` profile, builds the extension, copies the output to the stable directory `~/.dsh/browser-extension`, and opens `chrome://extensions`. Enable Developer mode, choose Load unpacked, and select the extension directory. Running the command again updates the managed installation.
-
-   A cloned checkout uses the same installer without downloading or overwriting source files:
-
-   ```sh
-   git clone https://github.com/Onenightcarnival/dsh-browser.git
-   cd dsh-browser
-   ./scripts/install.sh
-   ```
-
-   Windows checkouts run `.\scripts\install.ps1` instead. Paths containing spaces are supported: the installer uses a profile-local directory junction instead of putting the absolute checkout path in pnpm's link spec.
-
-2. **Start dsh with the bridge plugin mounted**. Use either the workspace-pinned runtime:
-
-   ```sh
-   cd ~/.dsh/dsh-browser && pnpm start
-   ```
-
-   From a clone, run `pnpm start` in the repository root instead.
-
-   Or use the exact supported public runtime:
+2. **Start dsh with the bridge plugin mounted**. DeepSeek Harness Desktop does this on launch. From a source checkout run `pnpm start` in the repository root, or use the exact supported public runtime:
 
    ```sh
    npx @deepseek-ai/dsh@0.1.5-rc.2 web
    ```
 
-   Both commands load the same bundle from the local `web` profile. Port 3080 is used by default; append `--port <port>` when it is occupied.
-
-   **DSH Desktop users**: the Desktop app assigns a random local Web port by default (`dsh-desktop.port: 0`), so port-based auto-discovery cannot predict it. Pin the port to `43189` in Desktop settings (see the [deepseek-harness-desktop user guide](https://github.com/anywhere-labs/deepseek-harness-desktop/blob/master/docs/user-guide.en.md)); auto-discovery covers that port. Alternatively, enter `http://127.0.0.1:<port>` manually in the side-panel settings.
+   Both load the same bundle from the local `web` profile. Port 3080 is used by default; append `--port <port>` when it is occupied. Auto-discovery covers 3080/3081/3090, the bridge's discovery-beacon window 43189–43192 (how a desktop app on a random port is found) and the legacy desktop port 14389; any other address goes into the side-panel settings as `http://127.0.0.1:<port>`.
 
    Loading or reloading the extension is passive: it does not probe local ports or open a WebSocket until the side panel is opened. A healthy connection established by the user may remain available for background approvals after the panel closes, but it will not reconnect without an open panel if it drops or another browser replaces it.
 

@@ -1,12 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import type { PanelCopy } from './strings.ts'
-import {
-  checkForExtensionUpdate,
-  checkoutInstallCommand,
-  managedInstallCommand,
-  readExtensionInstallInfo,
-  type ExtensionInstallInfo,
-} from './updates.ts'
+import { checkForExtensionUpdate, RELEASES_URL } from './updates.ts'
 
 type CheckState =
   | { status: 'idle' }
@@ -15,27 +9,14 @@ type CheckState =
   | { status: 'available'; latestVersion: string }
   | { status: 'error' }
 
-type CopyState = 'idle' | 'copied' | 'error'
-
-/** Read-only update check plus the existing managed installer handoff. */
+/** Read-only update check; a newer version links to the GitHub Releases page. */
 export function UpdateCard({ copy }: { copy: PanelCopy['update'] }): React.JSX.Element {
   const currentVersion = chrome.runtime.getManifest().version
   const [checkState, setCheckState] = useState<CheckState>({ status: 'idle' })
-  const [copyState, setCopyState] = useState<CopyState>('idle')
-  const [installInfo, setInstallInfo] = useState<ExtensionInstallInfo | null>(null)
-
-  useEffect(() => {
-    let current = true
-    void readExtensionInstallInfo(chrome.runtime.getURL('install-info.json')).then((info) => {
-      if (current) setInstallInfo(info)
-    })
-    return () => { current = false }
-  }, [])
 
   async function check(): Promise<void> {
     if (checkState.status === 'checking') return
     setCheckState({ status: 'checking' })
-    setCopyState('idle')
     try {
       const result = await checkForExtensionUpdate(currentVersion)
       setCheckState(result.updateAvailable
@@ -43,21 +24,6 @@ export function UpdateCard({ copy }: { copy: PanelCopy['update'] }): React.JSX.E
         : { status: 'current', latestVersion: result.latestVersion })
     } catch {
       setCheckState({ status: 'error' })
-    }
-  }
-
-  async function copyCommand(): Promise<void> {
-    const command = installInfo?.mode === 'managed'
-      ? managedInstallCommand()
-      : installInfo?.mode === 'checkout'
-        ? checkoutInstallCommand(installInfo.sourceRoot)
-        : null
-    if (command === null) return
-    try {
-      await navigator.clipboard.writeText(command)
-      setCopyState('copied')
-    } catch {
-      setCopyState('error')
     }
   }
 
@@ -70,13 +36,6 @@ export function UpdateCard({ copy }: { copy: PanelCopy['update'] }): React.JSX.E
         : checkState.status === 'available'
           ? copy.availableTitle(checkState.latestVersion)
           : copy.errorTitle
-  const availableBody = installInfo === null
-    ? copy.availableLoadingBody
-    : installInfo.mode === 'managed'
-      ? copy.availableManagedBody
-      : installInfo.mode === 'checkout'
-        ? copy.availableCheckoutBody
-        : copy.availableUnknownBody
   const statusBody = checkState.status === 'idle'
     ? copy.idleBody
     : checkState.status === 'checking'
@@ -84,18 +43,8 @@ export function UpdateCard({ copy }: { copy: PanelCopy['update'] }): React.JSX.E
       : checkState.status === 'current'
         ? copy.currentBody(checkState.latestVersion)
         : checkState.status === 'available'
-          ? availableBody
+          ? copy.availableBody
           : copy.errorBody
-  const installMode = installInfo?.mode ?? 'loading'
-  const installLabel = installMode === 'managed'
-    ? copy.managedInstall
-    : installMode === 'checkout'
-      ? copy.checkoutInstall
-      : installMode === 'unknown'
-        ? copy.unknownInstall
-        : copy.loadingInstall
-  const updateCommandAvailable = installInfo?.mode === 'managed' || installInfo?.mode === 'checkout'
-  const copyLabel = installInfo?.mode === 'checkout' ? copy.copyCheckoutCommand : copy.copyManagedCommand
 
   return (
     <section className={`update-card update-${checkState.status}`} aria-labelledby="update-card-title">
@@ -105,7 +54,6 @@ export function UpdateCard({ copy }: { copy: PanelCopy['update'] }): React.JSX.E
           <h2 id="update-card-title">{copy.title}</h2>
         </div>
         <div className="update-meta">
-          <span className={`install-pill install-${installMode}`}>{installLabel}</span>
           <span className="version-pill">v{currentVersion}</span>
         </div>
       </div>
@@ -127,13 +75,13 @@ export function UpdateCard({ copy }: { copy: PanelCopy['update'] }): React.JSX.E
           onClick={() => { void check() }}>
           {checkState.status === 'checking' ? copy.checking : copy.check}
         </button>
-        {checkState.status === 'available' && updateCommandAvailable && (
-          <button type="button" className="update-copy" onClick={() => { void copyCommand() }}>
-            {copyState === 'copied' ? copy.copied : copyLabel}
+        {checkState.status === 'available' && (
+          <button type="button" className="update-releases"
+            onClick={() => { void chrome.tabs.create({ url: RELEASES_URL }) }}>
+            {copy.openReleases}
           </button>
         )}
       </div>
-      {copyState === 'error' && <small className="update-copy-error">{copy.copyError}</small>}
     </section>
   )
 }

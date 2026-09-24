@@ -132,22 +132,12 @@ export interface PanelCopy {
     currentTitle: string
     currentBody: (latestVersion: string) => string
     availableTitle: (latestVersion: string) => string
-    availableLoadingBody: string
-    availableManagedBody: string
-    availableCheckoutBody: string
-    availableUnknownBody: string
+    availableBody: string
     reloadReminder: string
-    loadingInstall: string
-    managedInstall: string
-    checkoutInstall: string
-    unknownInstall: string
     errorTitle: string
     errorBody: string
     check: string
-    copyManagedCommand: string
-    copyCheckoutCommand: string
-    copied: string
-    copyError: string
+    openReleases: string
   }
   textSize: {
     open: string
@@ -362,22 +352,12 @@ const EN: PanelCopy = {
     currentTitle: 'No update found',
     currentBody: (latestVersion) => `Repository version: v${latestVersion}.`,
     availableTitle: (latestVersion) => `Version ${latestVersion} is available`,
-    availableLoadingBody: 'Confirming how this extension was installed before offering an update command.',
-    availableManagedBody: 'Copy the managed update command and run it in Terminal.',
-    availableCheckoutBody: 'Pull or switch to the revision you want in the original checkout, then rerun its installer.',
-    availableUnknownBody: 'This copy predates install-source metadata. Use the same update flow you originally installed with; no command will be copied.',
-    reloadReminder: 'After updating, open chrome://extensions, find “dsh Browser Assistant,” click the rotating-arrow Reload button on its card, then restart dsh.',
-    loadingInstall: 'Identifying install…',
-    managedInstall: 'Managed install',
-    checkoutInstall: 'Local checkout',
-    unknownInstall: 'Install source unknown',
+    availableBody: 'Download the new extension zip and bridge .tgz from GitHub Releases, replace the contents of this extension folder, and reinstall the .tgz.',
+    reloadReminder: 'After replacing the files, open chrome://extensions, find “dsh Browser Assistant,” click the rotating-arrow Reload button on its card, then restart dsh.',
     errorTitle: 'Could not check for updates',
     errorBody: 'Check your network connection and try again.',
     check: 'Check for updates',
-    copyManagedCommand: 'Copy update command',
-    copyCheckoutCommand: 'Copy checkout command',
-    copied: 'Command copied',
-    copyError: 'Could not copy the command. Run the installer from the original installation source instead.',
+    openReleases: 'Open Releases',
   },
   textSize: {
     open: 'Text size',
@@ -592,22 +572,12 @@ const ZH: PanelCopy = {
     currentTitle: '未发现更新',
     currentBody: (latestVersion) => `仓库版本：v${latestVersion}。`,
     availableTitle: (latestVersion) => `发现新版本 ${latestVersion}`,
-    availableLoadingBody: '正在确认此扩展的安装来源，然后再提供更新命令。',
-    availableManagedBody: '复制托管更新命令并在终端运行。',
-    availableCheckoutBody: '请先在原 checkout 中 pull 或切换到目标 revision，再重新运行其中的安装脚本。',
-    availableUnknownBody: '这个副本没有安装来源记录。请沿用最初的更新方式；这里不会复制可能覆盖来源的命令。',
-    reloadReminder: '更新完成后，打开 chrome://extensions，找到“dsh 浏览器助手”，点击卡片上的“重新加载”旋转箭头，然后重启 dsh。',
-    loadingInstall: '正在识别安装来源…',
-    managedInstall: '托管安装',
-    checkoutInstall: '本地 checkout',
-    unknownInstall: '安装来源未知',
+    availableBody: '到 GitHub Releases 下载新的扩展 zip 和桥插件 .tgz，用 zip 内容替换本扩展目录，并重新安装 .tgz。',
+    reloadReminder: '替换文件后，打开 chrome://extensions，找到“dsh 浏览器助手”，点击卡片上的“重新加载”旋转箭头，然后重启 dsh。',
     errorTitle: '暂时无法检查更新',
     errorBody: '请检查网络连接，然后重试。',
     check: '检查更新',
-    copyManagedCommand: '复制更新命令',
-    copyCheckoutCommand: '复制 checkout 命令',
-    copied: '命令已复制',
-    copyError: '无法复制命令，请回到原安装来源重新运行安装脚本。',
+    openReleases: '打开 Releases',
   },
   textSize: {
     open: '字号',
