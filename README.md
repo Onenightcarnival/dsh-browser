@@ -88,6 +88,8 @@ The paired Playwright / extension duration ratio was **1.24** (95% CI **1.16–1
 | Wait for stability | `browser_wait` | Page-load and render-settle detection |
 | Send images | `session.prompt` / `session.attachment` | Host-capability-gated image drafts, image-only prompts, and durable history previews |
 | Quote a selection | side panel composer | Text you highlight in the page appears in the composer and is sent with your next message as fenced, attributed page content |
+| Pick a model | model button next to the composer | Lists the providers and models configured in dsh (`session.modelCatalog`) and switches the current session's model and reasoning effort (`session.selectModel`); providers without credentials are greyed out. dsh also records the choice as the default for new sessions |
+| Delete a session | session list | Sessions nothing holds are purged at once; a session this dsh process still holds is archived and leaves the list immediately, and its files are purged the next time dsh starts |
 
 ## Repository layout
 

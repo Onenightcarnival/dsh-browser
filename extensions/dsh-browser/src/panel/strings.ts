@@ -147,6 +147,19 @@ export interface PanelCopy {
     reset: string
     value: (percent: string) => string
   }
+  model: {
+    open: string
+    title: string
+    unknown: string
+    loading: string
+    empty: string
+    groupEmpty: string
+    unroutable: string
+    reasoning: string
+    loadFailed: (reason: string) => string
+    selectFailed: (reason: string) => string
+    failures: (providers: string) => string
+  }
   app: {
     openSettings: string
     settings: string
@@ -368,6 +381,19 @@ const EN: PanelCopy = {
     reset: 'Reset',
     value: (percent) => `Text size ${percent}`,
   },
+  model: {
+    open: 'Model',
+    title: 'Model',
+    unknown: 'Model',
+    loading: 'Loading models…',
+    empty: 'No models are configured in dsh. Add a provider in dsh settings first.',
+    groupEmpty: 'No models listed.',
+    unroutable: 'not configured',
+    reasoning: 'Reasoning effort',
+    loadFailed: (reason) => `Could not load the model list: ${reason}`,
+    selectFailed: (reason) => `Could not switch model: ${reason}`,
+    failures: (providers) => `Model lists unavailable for: ${providers}`,
+  },
   app: {
     openSettings: 'Open settings',
     settings: 'Settings',
@@ -588,6 +614,19 @@ const ZH: PanelCopy = {
     larger: '放大字号',
     reset: '恢复默认',
     value: (percent) => `字号 ${percent}`,
+  },
+  model: {
+    open: '模型',
+    title: '模型',
+    unknown: '模型',
+    loading: '正在加载模型列表…',
+    empty: 'dsh 里还没有配置模型，请先在 dsh 设置中添加提供方。',
+    groupEmpty: '没有可用模型。',
+    unroutable: '未配置',
+    reasoning: '推理强度',
+    loadFailed: (reason) => `模型列表加载失败：${reason}`,
+    selectFailed: (reason) => `切换模型失败：${reason}`,
+    failures: (providers) => `以下提供方的模型列表不可用：${providers}`,
   },
   app: {
     openSettings: '打开设置',

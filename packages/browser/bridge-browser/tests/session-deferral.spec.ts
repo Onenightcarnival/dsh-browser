@@ -67,7 +67,7 @@ describe('withSessionDeferral', () => {
     const id = await provisionalId(wrapped)
 
     await expect(wrapped.call(request('session.history', { sessionId: id })))
-      .resolves.toEqual({ ok: true, value: { events: [], hasMore: false } })
+      .resolves.toEqual({ ok: true, value: { events: [], hasMore: false, projections: { asOfSeq: -1, values: { modelSelection: { lastUsed: null, next: null } } } } })
     expect(sessionHistory).not.toHaveBeenCalled()
 
     await wrapped.call(request('session.history', { sessionId: 'session-real' }))
@@ -92,7 +92,7 @@ describe('withSessionDeferral', () => {
       value: {
         events: [],
         hasMore: false,
-        projections: { asOfSeq: -1, values: { imageLimits: limits } },
+        projections: { asOfSeq: -1, values: { imageLimits: limits, modelSelection: { lastUsed: null, next: null } } },
       },
     })
   })
@@ -165,5 +165,80 @@ describe('withSessionDeferral', () => {
     await wrapped.call(request('session.history', { sessionId: second }))
     expect(sessionHistory).toHaveBeenCalledOnce()
     expect(withSessionDeferral(api, false)).toBe(api)
+  })
+})
+
+describe('model selection on provisional sessions', () => {
+  function modelHarness(selectOk = true) {
+    const h = apiHarness()
+    const selectModel = vi.fn(async (call: HostRpcCall): Promise<HostRpcResult> => selectOk
+      ? { ok: true, value: { selected: { ...(call.payload as object) } } }
+      : { ok: false, error: { code: 'session/model-unavailable', message: 'no such route', details: {} } })
+    h.call.mockImplementation(async (request: HostRpcCall): Promise<HostRpcResult> => {
+      if (request.method === 'session.create') return h.sessionCreate(request)
+      if (request.method === 'session.history') return h.sessionHistory(request)
+      if (request.method === 'session.prompt') return h.sessionPrompt(request)
+      if (request.method === 'session.selectModel') return selectModel(request)
+      return { ok: false, error: { code: 'not-found', message: request.method, details: {} } }
+    })
+    return { ...h, selectModel }
+  }
+
+  it('records a pre-prompt choice, echoes it through projections, and installs it after materialization', async () => {
+    const h = modelHarness()
+    const api = withSessionDeferral(h.api, true)
+    const sessionId = await provisionalId(api)
+
+    const chosen = await api.call(request('session.selectModel', { sessionId, provider: 'deepseek', model: 'deepseek-v4-flash', reasoningEffort: 'high' }))
+    expect(chosen).toEqual({ ok: true, value: { selected: { provider: 'deepseek', model: 'deepseek-v4-flash', reasoningEffort: 'high' } } })
+    expect(h.selectModel).not.toHaveBeenCalled()
+
+    const history = await api.call(request('session.history', { sessionId }))
+    expect(history).toEqual({
+      ok: true,
+      value: {
+        events: [],
+        hasMore: false,
+        projections: { asOfSeq: -1, values: { modelSelection: { lastUsed: null, next: { provider: 'deepseek', model: 'deepseek-v4-flash', reasoningEffort: 'high' } } } },
+      },
+    })
+    expect(h.sessionHistory).not.toHaveBeenCalled()
+
+    const prompted = await api.call(request('session.prompt', { sessionId, content: [] }))
+    expect(prompted).toEqual({ ok: true, value: { accepted: true } })
+    expect(h.sessionCreate).toHaveBeenCalledTimes(1)
+    expect(h.selectModel).toHaveBeenCalledTimes(1)
+    expect(h.selectModel.mock.calls[0]?.[0].payload).toEqual({ sessionId, provider: 'deepseek', model: 'deepseek-v4-flash', reasoningEffort: 'high' })
+    // Call order: create → selectModel → prompt.
+    const order = h.call.mock.calls.map(([call]) => call.method)
+    expect(order.slice(-3)).toEqual(['session.create', 'session.selectModel', 'session.prompt'])
+
+    // Once real, both methods go straight to the gateway.
+    await api.call(request('session.history', { sessionId }))
+    expect(h.sessionHistory).toHaveBeenCalledTimes(1)
+    await api.call(request('session.selectModel', { sessionId, provider: 'deepseek', model: 'deepseek-v4' }))
+    expect(h.selectModel).toHaveBeenCalledTimes(2)
+  })
+
+  it('fails the first prompt when the stored route is rejected, keeping the session provisional-free', async () => {
+    const h = modelHarness(false)
+    const api = withSessionDeferral(h.api, true)
+    const sessionId = await provisionalId(api)
+    await api.call(request('session.selectModel', { sessionId, provider: 'nope', model: 'missing' }))
+    const prompted = await api.call(request('session.prompt', { sessionId, content: [] }))
+    expect(prompted).toMatchObject({ ok: false, error: { code: 'session/model-unavailable' } })
+    expect(h.sessionPrompt).not.toHaveBeenCalled()
+  })
+
+  it('rejects a malformed provisional selection and passes real-session calls through untouched', async () => {
+    const h = modelHarness()
+    const api = withSessionDeferral(h.api, true)
+    const sessionId = await provisionalId(api)
+    expect(await api.call(request('session.selectModel', { sessionId, provider: '', model: 'x' })))
+      .toMatchObject({ ok: false, error: { code: 'bad-request' } })
+    await api.call(request('session.selectModel', { sessionId: 'session-other', provider: 'a', model: 'b' }))
+    expect(h.selectModel).toHaveBeenCalledTimes(1)
+    const history = await api.call(request('session.history', { sessionId }))
+    expect(history).toMatchObject({ ok: true, value: { projections: { asOfSeq: -1, values: { modelSelection: { lastUsed: null, next: null } } } } })
   })
 })

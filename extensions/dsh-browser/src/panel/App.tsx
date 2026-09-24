@@ -7,7 +7,7 @@
  * @module
  */
 
-import { memo, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { BRIDGE_SESSION_PURGE_METHOD, DEFAULT_SNAPSHOT_MAX_CHARS } from '@onenightcarnival/dsh-bridge-browser/src/protocol.ts'
 import type { BridgeCaps } from '@onenightcarnival/dsh-bridge-browser/src/protocol.ts'
 import type { ServerFrame } from '@onenightcarnival/dsh-bridge-browser/src/protocol.ts'
@@ -19,6 +19,16 @@ import whaleUrl from '../../assets/icons/deepseek-256.png'
 import type { ApprovalDecision, ApprovalRequest } from '../security/approval.ts'
 import { getUiLocale } from '../i18n.ts'
 import { PANEL_COPY, type PanelCopy } from './strings.ts'
+import { ModelPicker } from './ModelPicker.tsx'
+import {
+  effectiveSelection,
+  parseModelCatalog,
+  parseModelSelection,
+  parseModelSelectionProjection,
+  sameSelection,
+  type ModelCatalog,
+  type ModelSelection,
+} from './models.ts'
 import {
   applyUiScale,
   DEFAULT_UI_SCALE,
@@ -641,6 +651,14 @@ export function App(): React.JSX.Element {
   const [relayNotice, setRelayNotice] = useState<string | null>(null)
   /** Outcome hint under the session list (e.g. a deletion completed only by archiving). */
   const [sessionNotice, setSessionNotice] = useState<string | null>(null)
+  /** Host model catalog (providers → models) and the current session's effective selection. */
+  const [modelCatalog, setModelCatalog] = useState<ModelCatalog | null>(null)
+  const [modelCatalogLoading, setModelCatalogLoading] = useState(false)
+  const [modelCatalogError, setModelCatalogError] = useState<string | null>(null)
+  const [modelSelection, setModelSelection] = useState<ModelSelection | null>(null)
+  const [modelMenuOpen, setModelMenuOpen] = useState(false)
+  const [modelBusy, setModelBusy] = useState(false)
+  const modelCatalogRef = useRef<ModelCatalog | null>(null)
   const [relayBusy, setRelayBusy] = useState(false)
   const [sessionTitle, setSessionTitle] = useState<string | null>(null)
   const [resumeHint, setResumeHint] = useState<{ ready: boolean; sessionId: string | null }>({ ready: false, sessionId: null })
@@ -925,6 +943,11 @@ export function App(): React.JSX.Element {
         && typeof projection.seq === 'number') {
         applyImageProjection(projection.sessionId, projection.seq, projection.value)
       }
+      if (typeof projection.sessionId === 'string'
+        && projection.key === 'modelSelection'
+        && projection.sessionId === sessionRef.current) {
+        applyModelSelectionProjection(projection.value)
+      }
       return
     }
     const payload = frame.frame.payload as { sessionId?: string; event?: SessionEventView } | undefined
@@ -1045,6 +1068,62 @@ export function App(): React.JSX.Element {
     try { await refreshHistory(sessionId) } finally { streamRefreshRef.current.delete(sessionId) }
   }
 
+  /** Show the selection the session's next request will use; absent projections fall back to the catalog default. */
+  function applyModelSelectionProjection(value: unknown): void {
+    const projection = parseModelSelectionProjection(value)
+    const next = effectiveSelection(projection, modelCatalogRef.current?.default ?? null)
+    setModelSelection((current) => sameSelection(current, next) ? current : next)
+  }
+
+  /** Load (or reload) the provider/model catalog dsh currently offers. */
+  const loadModelCatalog = useCallback(async (): Promise<void> => {
+    setModelCatalogLoading(true)
+    try {
+      const catalog = parseModelCatalog(await api.rpc<unknown>('session.modelCatalog', {}))
+      if (catalog === null) throw new Error('unexpected catalog shape')
+      modelCatalogRef.current = catalog
+      setModelCatalog(catalog)
+      setModelCatalogError(null)
+      setModelSelection((current) => current ?? catalog.default)
+    } catch (cause) {
+      setModelCatalogError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setModelCatalogLoading(false)
+    }
+  }, [api])
+
+  /** Fetch the catalog once connected; the menu refreshes it on every open. */
+  useEffect(() => {
+    if (state !== 'connected') return
+    void loadModelCatalog()
+  }, [state, loadModelCatalog])
+
+  const closeModelMenu = useCallback((): void => { setModelMenuOpen(false) }, [])
+
+  function toggleModelMenu(): void {
+    const opening = !modelMenuOpen
+    setModelMenuOpen(opening)
+    if (opening) void loadModelCatalog()
+  }
+
+  /** Install a model for the current session; dsh also makes it the default for new sessions. */
+  async function selectModel(selection: ModelSelection): Promise<void> {
+    const sessionId = sessionRef.current
+    if (sessionId === null || modelBusy) return
+    setModelBusy(true)
+    setError(null)
+    try {
+      const result = await api.rpc<{ selected?: unknown }>('session.selectModel', { sessionId, ...selection })
+      const selected = parseModelSelection(result.selected) ?? selection
+      if (sessionRef.current === sessionId) setModelSelection(selected)
+      setModelMenuOpen(false)
+    } catch (cause) {
+      setError(copy.model.selectFailed(cause instanceof Error ? cause.message : String(cause)))
+    } finally {
+      setModelBusy(false)
+    }
+  }
+
   function applyHistory(id: string, history: HistoryPage): void {
     if (sessionRef.current !== id) return
     const followed = followSnapshotsRef.current.get(id)
@@ -1070,6 +1149,7 @@ export function App(): React.JSX.Element {
       followed.suffix = []
     }
     applyHistoryImageProjection(id, history.projections)
+    applyModelSelectionProjection(history.projections?.values.modelSelection)
     const historyTitle = latestSessionTitle(events)
     if (historyTitle !== undefined) setSessionTitle(historyTitle)
     setRows(mergeHistoryRows(events, nextSeq, locale))
@@ -2126,6 +2206,19 @@ export function App(): React.JSX.Element {
                 title={imageLimits === null ? copy.app.imageUnavailable : copy.app.addImages}
                 onClick={() => fileInputRef.current?.click()}
               ><AttachmentIcon /></button>
+              <ModelPicker
+                catalog={modelCatalog}
+                loading={modelCatalogLoading}
+                loadError={modelCatalogError}
+                selection={modelSelection}
+                open={modelMenuOpen}
+                disabled={!sessionReady || busy}
+                busy={modelBusy}
+                copy={copy}
+                onToggle={toggleModelMenu}
+                onClose={closeModelMenu}
+                onSelect={(selection) => { void selectModel(selection) }}
+              />
               <span>{copy.app.composerHelp}</span>
             </span>
             {working ? (

@@ -221,6 +221,19 @@ try {
   assert.equal(created.sessionId, sessionId)
   assert.equal((await observation()).sessionId, sessionId)
   assert.ok((await rpc('session.list', {})).items.some(item => item.sessionId === sessionId))
+  // Model picker: the catalog and a selection of its default route go through
+  // the same gateway methods the desktop web UI uses.
+  const catalog = await rpc('session.modelCatalog', {})
+  assert.equal(typeof catalog.default?.provider, 'string', JSON.stringify(catalog))
+  assert.equal(typeof catalog.default?.model, 'string')
+  assert.ok(Array.isArray(catalog.groups) && Array.isArray(catalog.routableProviders))
+  console.log(`Model catalog: default ${catalog.default.provider}/${catalog.default.model}, ${catalog.groups.length} provider group(s), routable: ${catalog.routableProviders.join(', ') || '(none)'}`)
+  const selected = await rpc('session.selectModel', { sessionId, ...catalog.default })
+  assert.equal(selected.selected?.provider, catalog.default.provider, JSON.stringify(selected))
+  assert.equal(selected.selected?.model, catalog.default.model)
+  const projectedSelection = (await rpc('session.history', { sessionId })).projections?.values?.modelSelection
+  assert.ok(projectedSelection !== undefined, 'history must carry the modelSelection projection')
+  assert.equal((projectedSelection.next ?? projectedSelection.lastUsed)?.model, catalog.default.model)
   const history = await rpc('session.history', { sessionId })
   assert.ok(Array.isArray(history.events))
   const migrated = await rpc('session.history', { sessionId: legacySessionId })

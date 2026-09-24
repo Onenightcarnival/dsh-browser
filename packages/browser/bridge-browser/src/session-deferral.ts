@@ -23,6 +23,20 @@ interface ProvisionalEntry {
   /** The original create payload, replayed at materialization (keeps cwd/workspaceId). */
   payload: Record<string, unknown>
   createdAt: number
+  /** Model chosen in the panel before the first prompt; installed right after materialization. */
+  model?: { provider: string; model: string; reasoningEffort?: string }
+}
+
+function modelSelectionOf(payload: unknown): ProvisionalEntry['model'] | undefined {
+  if (!isRecord(payload) || typeof payload.provider !== 'string' || typeof payload.model !== 'string') return undefined
+  if (payload.provider === '' || payload.model === '') return undefined
+  return {
+    provider: payload.provider,
+    model: payload.model,
+    ...(typeof payload.reasoningEffort === 'string' && payload.reasoningEffort !== ''
+      ? { reasoningEffort: payload.reasoningEffort }
+      : {}),
+  }
 }
 
 /**
@@ -70,16 +84,36 @@ export function withSessionDeferral(
       if (call.method === 'session.history') {
         const sessionId = sessionIdOf(call.payload)
         if (sessionId === undefined || !provisional.has(sessionId)) return api.call(call)
+        const entry = provisional.get(sessionId)
         return {
           ok: true,
           value: {
             events: [],
             hasMore: false,
-            ...(imageLimits === undefined
-              ? {}
-              : { projections: { asOfSeq: -1, values: { imageLimits } } }),
+            projections: {
+              asOfSeq: -1,
+              values: {
+                ...(imageLimits === undefined ? {} : { imageLimits }),
+                // Mirrors the Host's modelSelection projection so the panel
+                // shows a pre-prompt choice the way it shows a real one.
+                modelSelection: { lastUsed: null, next: entry?.model === undefined ? null : { ...entry.model } },
+              },
+            },
           },
         }
+      }
+      if (call.method === 'session.selectModel') {
+        // The gateway cannot validate a route without a live session; keep
+        // the choice and install it the moment the session materializes.
+        const sessionId = sessionIdOf(call.payload)
+        const entry = sessionId === undefined ? undefined : provisional.get(sessionId)
+        if (entry === undefined) return api.call(call)
+        const model = modelSelectionOf(call.payload)
+        if (model === undefined) {
+          return { ok: false, error: { code: 'bad-request', message: 'provider and model must be non-empty strings', details: {} } }
+        }
+        entry.model = model
+        return { ok: true, value: { selected: { ...model } } }
       }
       if (call.method !== 'session.prompt') return api.call(call)
       const sessionId = sessionIdOf(call.payload)
@@ -87,12 +121,25 @@ export function withSessionDeferral(
       const entry = provisional.get(sessionId)
       if (entry === undefined) return api.call(call)
       const existing = materializing.get(sessionId)
-      const pending = existing ?? api.call({
-        rpcId: crypto.randomUUID(),
-        method: 'session.create',
-        payload: { ...entry.payload, sessionId },
-        signal: call.signal,
-      })
+      const pending = existing ?? (async (): Promise<HostRpcResult> => {
+        const created = await api.call({
+          rpcId: crypto.randomUUID(),
+          method: 'session.create',
+          payload: { ...entry.payload, sessionId },
+          signal: call.signal,
+        })
+        if (!created.ok || entry.model === undefined) return created
+        // A pre-prompt model choice is part of creating this session: the
+        // first request must already use it, so a rejected route fails the
+        // prompt instead of silently running on the default model.
+        const selected = await api.call({
+          rpcId: crypto.randomUUID(),
+          method: 'session.selectModel',
+          payload: { sessionId, ...entry.model },
+          signal: call.signal,
+        })
+        return selected.ok ? created : selected
+      })()
       if (existing === undefined) {
         materializing.set(sessionId, pending)
         void pending.then(
