@@ -776,6 +776,8 @@ export function App(): React.JSX.Element {
         trustedActionOrigins: raw?.trustedActionOrigins ?? [],
         approvalNotifications: raw?.approvalNotifications ?? true,
         autoResumeSession: raw?.autoResumeSession ?? true,
+        allowScreenshots: raw?.allowScreenshots ?? true,
+        trustedInput: raw?.trustedInput ?? false,
       })
     })
   }, [])
@@ -1513,6 +1515,29 @@ export function App(): React.JSX.Element {
     }
   }
 
+  /**
+   * The debugger permission is optional in the manifest so installs stay
+   * quiet; enabling trusted input requests it from this user gesture and
+   * turning it off releases it again.
+   */
+  async function toggleTrustedInput(enabled: boolean): Promise<void> {
+    if (enabled) {
+      let granted = false
+      try {
+        granted = await chrome.permissions.request({ permissions: ['debugger'] })
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : String(cause))
+      }
+      if (!granted) {
+        setSettings((current) => current === null ? current : { ...current, trustedInput: false })
+        return
+      }
+    } else {
+      try { await chrome.permissions.remove({ permissions: ['debugger'] }) } catch { /* not granted */ }
+    }
+    setSettings((current) => current === null ? current : { ...current, trustedInput: enabled })
+  }
+
   /** Load relay profiles from the llm-pi-ai settings namespace once per settings visit. */
   useEffect(() => {
     if (!showSettings || relayLoaded) return
@@ -1876,6 +1901,34 @@ export function App(): React.JSX.Element {
               onChange={(event) => setSettings((current) => current === null
                 ? current
                 : { ...current, autoResumeSession: event.target.checked })}
+            />
+            <span className="setting-toggle-control" aria-hidden="true"><span /></span>
+          </label>
+          <label className="setting-toggle">
+            <span className="setting-toggle-copy">
+              <strong>{copy.settings.allowScreenshots}</strong>
+              <small>{copy.settings.allowScreenshotsHelp}</small>
+            </span>
+            <input
+              className="setting-toggle-input"
+              type="checkbox"
+              checked={settings?.allowScreenshots ?? true}
+              onChange={(event) => setSettings((current) => current === null
+                ? current
+                : { ...current, allowScreenshots: event.target.checked })}
+            />
+            <span className="setting-toggle-control" aria-hidden="true"><span /></span>
+          </label>
+          <label className="setting-toggle">
+            <span className="setting-toggle-copy">
+              <strong>{copy.settings.trustedInput}</strong>
+              <small>{copy.settings.trustedInputHelp}</small>
+            </span>
+            <input
+              className="setting-toggle-input"
+              type="checkbox"
+              checked={settings?.trustedInput ?? false}
+              onChange={(event) => { void toggleTrustedInput(event.target.checked) }}
             />
             <span className="setting-toggle-control" aria-hidden="true"><span /></span>
           </label>

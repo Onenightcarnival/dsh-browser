@@ -15,6 +15,8 @@ import type { ElementIds } from './ids.ts'
 import type { SnapshotBudget } from './snapshot.ts'
 import { buildSnapshot, renderSnapshot } from './snapshot.ts'
 import { isSensitiveField } from './privacy.ts'
+import { parseKeyCombo } from '../key-combo.ts'
+import { toMarkdown } from './markdown.ts'
 
 /** A settled action result. */
 export interface ActionResult {
@@ -188,7 +190,7 @@ export async function runAction(action: string, args: Record<string, unknown>, c
     case 'browser_reload':
       return reloadAction()
     case 'browser_get_text':
-      return getTextAction(args)
+      return getTextAction(args, ctx)
     case 'browser_wait':
       return waitAction(args, ctx)
     case 'browser_find':
@@ -201,6 +203,17 @@ export async function runAction(action: string, args: Record<string, unknown>, c
       return waitForAction(args, ctx)
     case 'browser_element_rects':
       return elementRectsAction(ctx)
+    case 'browser_element_rect': {
+      const { el, label } = targetElement(args, ctx)
+      el.scrollIntoView({ block: 'center', behavior: 'instant' })
+      const rect = viewportRect(el)
+      if (rect === null) throw new ActionError('action-failed', `${label} has no layout box.`)
+      return { text: JSON.stringify({ ...rect, x: rect.x + Math.floor(rect.width / 2), y: rect.y + Math.floor(rect.height / 2), label }) }
+    }
+    case 'browser_drag':
+      return dragAction(args, ctx)
+    case 'browser_upload':
+      return uploadAction(args, ctx)
     default:
       throw new ActionError('bad-args', `Unknown action: ${action}`)
   }
@@ -239,6 +252,7 @@ function withPageDelta(text: string, ctx: ActionContext): ActionResult {
  * roots so a click lands on the component's real control, not its host.
  */
 function elementAtPoint(x: number, y: number): Element | null {
+  if (typeof document.elementFromPoint !== 'function') return null
   let el = document.elementFromPoint(x, y)
   while (el?.shadowRoot !== null && el?.shadowRoot !== undefined) {
     const inner = el.shadowRoot.elementFromPoint(x, y)
@@ -441,23 +455,7 @@ async function typeAction(args: Record<string, unknown>, ctx: ActionContext): Pr
   return withPageDelta(`Entered ${text.length} characters into [${index}].`, ctx)
 }
 
-/** Parse "Ctrl+Shift+ArrowDown" into a key plus modifier flags. */
-export function parseKeyCombo(combo: string): { key: string; ctrlKey: boolean; shiftKey: boolean; altKey: boolean; metaKey: boolean } {
-  const flags = { ctrlKey: false, shiftKey: false, altKey: false, metaKey: false }
-  if (combo.trim() === '+') return { key: '+', ...flags }
-  const parts = combo.split('+').map((part) => part.trim()).filter((part) => part !== '')
-  let key = ''
-  for (const part of parts) {
-    const lower = part.toLowerCase()
-    if (lower === 'ctrl' || lower === 'control') flags.ctrlKey = true
-    else if (lower === 'shift') flags.shiftKey = true
-    else if (lower === 'alt' || lower === 'option') flags.altKey = true
-    else if (lower === 'meta' || lower === 'cmd' || lower === 'command' || lower === 'win') flags.metaKey = true
-    else key = part
-  }
-  if (key === '' && parts.length === 1) key = parts[0] as string
-  return { key, ...flags }
-}
+export { parseKeyCombo } from '../key-combo.ts'
 
 async function pressAction(args: Record<string, unknown>, ctx: ActionContext): Promise<ActionResult> {
   const combo = typeof args.key === 'string' && args.key !== '' ? args.key : ''
@@ -555,12 +553,23 @@ function reloadAction(): ActionResult {
   }
 }
 
-async function getTextAction(args: Record<string, unknown>): Promise<ActionResult> {
+async function getTextAction(args: Record<string, unknown>, ctx: ActionContext): Promise<ActionResult> {
   const selector = typeof args.selector === 'string' && args.selector !== '' ? args.selector : undefined
-  const source = selector !== undefined ? deepQuerySelector(document, selector) : null
-  const text = source !== null ? pageText(source) : selector !== undefined ? `No element matched selector: ${selector}` : pageText()
-  const truncated = truncate(text, 8_000)
-  return { text: truncated.text + (truncated.truncated > 0 ? `\n(Truncated ${truncated.truncated} characters.)` : '') }
+  const format = args.format === 'plain' ? 'plain' : 'markdown'
+  let source: Element | null = null
+  if (selector !== undefined) {
+    source = deepQuerySelector(document, selector)
+    if (source === null) return { text: `No element matched selector: ${selector}` }
+  } else if (format === 'markdown') {
+    // Prefer the content region so navigation chrome does not dominate.
+    source = deepQuerySelector(document, 'main, [role="main"], article') ?? document.body
+  }
+  const text = format === 'plain'
+    ? (source !== null ? pageText(source) : pageText())
+    : toMarkdown(source)
+  const limit = Math.max(8_000, ctx.budget.maxChars)
+  const truncated = truncate(text, limit)
+  return { text: truncated.text + (truncated.truncated > 0 ? `\n(Truncated ${truncated.truncated} characters; use selector to read a narrower region.)` : '') }
 }
 
 async function waitAction(args: Record<string, unknown>, ctx: ActionContext): Promise<ActionResult> {
@@ -804,6 +813,96 @@ async function waitForAction(args: Record<string, unknown>, ctx: ActionContext):
   }
   await waitForPageSettled(TYPE_SETTLE)
   return withPageDelta(`${what} ${gone ? 'disappeared' : 'appeared'} after ${elapsed}ms.`, ctx)
+}
+
+/**
+ * Drag one element onto another (or to viewport coordinates) with both the
+ * HTML5 drag-and-drop event sequence (dragstart → dragenter/dragover → drop →
+ * dragend, sharing one DataTransfer) and a pointer/mouse sequence for
+ * libraries that implement dragging from mouse events instead.
+ */
+async function dragAction(args: Record<string, unknown>, ctx: ActionContext): Promise<ActionResult> {
+  const source = targetElement(args, ctx)
+  const to = typeof args.toIndex === 'number'
+    ? targetElement({ index: args.toIndex }, ctx)
+    : typeof args.toX === 'number' && typeof args.toY === 'number'
+      ? targetElement({ x: args.toX, y: args.toY }, ctx)
+      : undefined
+  if (to === undefined) throw new ActionError('bad-args', 'Provide toIndex, or toX and toY, for the drop target.')
+  source.el.scrollIntoView({ block: 'center', behavior: 'instant' })
+  const from = source.el.getBoundingClientRect()
+  const dest = to.el.getBoundingClientRect()
+  const start = { x: from.left + from.width / 2, y: from.top + from.height / 2 }
+  const end = typeof args.toX === 'number' && typeof args.toY === 'number'
+    ? { x: Math.round(args.toX), y: Math.round(args.toY) }
+    : { x: dest.left + dest.width / 2, y: dest.top + dest.height / 2 }
+  const pointer = (type: string, target: Element, x: number, y: number, extra: Record<string, unknown> = {}): boolean => {
+    const init = { bubbles: true, cancelable: true, composed: true, clientX: x, clientY: y, button: 0, buttons: 1, ...extra }
+    const event = typeof PointerEvent === 'function' && type.startsWith('pointer') ? new PointerEvent(type, init) : new MouseEvent(type, init)
+    return target.dispatchEvent(event)
+  }
+  const transfer = typeof DataTransfer === 'function' ? new DataTransfer() : undefined
+  const drag = (type: string, target: Element, x: number, y: number): boolean => {
+    const init: DragEventInit = { bubbles: true, cancelable: true, composed: true, clientX: x, clientY: y, ...(transfer === undefined ? {} : { dataTransfer: transfer }) }
+    const event = typeof DragEvent === 'function' ? new DragEvent(type, init) : new MouseEvent(type, init)
+    return target.dispatchEvent(event)
+  }
+  pointer('pointerdown', source.el, start.x, start.y)
+  pointer('mousedown', source.el, start.x, start.y)
+  const nativeDrag = drag('dragstart', source.el, start.x, start.y)
+  const steps = 8
+  for (let step = 1; step <= steps; step++) {
+    const x = start.x + ((end.x - start.x) * step) / steps
+    const y = start.y + ((end.y - start.y) * step) / steps
+    const over = elementAtPoint(x, y) ?? to.el
+    pointer('pointermove', over, x, y)
+    pointer('mousemove', over, x, y)
+    if (nativeDrag) drag('dragover', over, x, y)
+    await sleep(16)
+  }
+  if (nativeDrag) {
+    drag('dragenter', to.el, end.x, end.y)
+    drag('dragover', to.el, end.x, end.y)
+    drag('drop', to.el, end.x, end.y)
+    drag('dragend', source.el, end.x, end.y)
+  }
+  pointer('pointerup', to.el, end.x, end.y, { buttons: 0 })
+  pointer('mouseup', to.el, end.x, end.y, { buttons: 0 })
+  await waitForPageSettled(ACTION_SETTLE)
+  return withPageDelta(`Dragged ${source.label} to ${to.label}.`, ctx)
+}
+
+/** Files arrive base64-encoded from the bridge (read on the dsh host); set them on a file input. */
+async function uploadAction(args: Record<string, unknown>, ctx: ActionContext): Promise<ActionResult> {
+  const index = numberArg(args, 'index')
+  const el = elementOrThrow(ctx.ids, index)
+  const files = Array.isArray(args.files) ? args.files : []
+  if (files.length === 0) throw new ActionError('bad-args', 'files must be a non-empty array.')
+  let input: HTMLInputElement | null = null
+  if (el instanceof HTMLInputElement && el.type === 'file') input = el
+  else {
+    // A styled upload button usually wraps or labels a hidden file input.
+    const scope = el.closest('label, form, [class*="upload" i], [class*="dropzone" i]') ?? el.parentElement
+    if (scope !== null && scope !== document.body) input = deepQuerySelectorAll(scope, 'input[type="file"]')[0] as HTMLInputElement | undefined ?? null
+    if (input === null && el instanceof HTMLLabelElement && el.control instanceof HTMLInputElement) input = el.control
+  }
+  if (input === null) throw new ActionError('action-failed', `[${index}] is not a file input and no file input was found near it.`)
+  if (typeof DataTransfer !== 'function') throw new ActionError('action-failed', 'This page does not support programmatic file selection.')
+  const transfer = new DataTransfer()
+  const names: string[] = []
+  for (const entry of files) {
+    const file = entry as { name?: unknown; mediaType?: unknown; data?: unknown }
+    if (typeof file.name !== 'string' || typeof file.data !== 'string') throw new ActionError('bad-args', 'Each file needs name and base64 data.')
+    const bytes = Uint8Array.from(atob(file.data), (char) => char.charCodeAt(0))
+    transfer.items.add(new File([bytes], file.name, { type: typeof file.mediaType === 'string' ? file.mediaType : 'application/octet-stream' }))
+    names.push(`${file.name} (${bytes.byteLength} bytes)`)
+  }
+  if (!input.multiple && files.length > 1) throw new ActionError('action-failed', `[${index}] accepts a single file; ${files.length} were given.`)
+  input.files = transfer.files
+  input.dispatchEvent(new Event('input', { bubbles: true }))
+  input.dispatchEvent(new Event('change', { bubbles: true }))
+  await waitForPageSettled(ACTION_SETTLE)
+  return withPageDelta(`Selected ${names.join(', ')} for the file input.`, ctx)
 }
 
 /** Viewport rectangles of the current inventory, for screenshot annotation. */

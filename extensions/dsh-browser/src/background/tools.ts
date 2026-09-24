@@ -21,6 +21,25 @@ import { wrapUntrustedContent } from '../security/untrusted.ts'
 import { approvalPromptForCall, originFromUrl } from './authorization.ts'
 import { waitForNextDocumentReady } from './navigation.ts'
 import { annotateScreenshot, parseAnnotationPayload } from './screenshot.ts'
+import {
+  attachDebugger,
+  debuggerClick,
+  debuggerDrag,
+  debuggerEvaluate,
+  debuggerHover,
+  debuggerPress,
+  debuggerScreenshot,
+} from './debugger-input.ts'
+import {
+  applyDialogPolicy,
+  describeDialogs,
+  ensurePageHooks,
+  evaluateExpression,
+  readConsole,
+  readDialogs,
+  readNetwork,
+} from './page-hooks.ts'
+import { parseKeyCombo } from '../key-combo.ts'
 import type { ApprovalAuthorization, ApprovalPrompt } from '../security/approval.ts'
 import { getUiLocale } from '../i18n.ts'
 
@@ -57,6 +76,8 @@ const ACTION_DELTA_TOOLS = new Set([
   'browser_wait',
   'browser_hover',
   'browser_form_input',
+  'browser_drag',
+  'browser_upload',
   'browser_wait_for',
 ])
 const ACTION_DELTA_GUIDANCE = 'The page settled and its current changes are included below. Continue from this state; take another snapshot only when broader page context is needed.'
@@ -81,6 +102,8 @@ const STATE_CHANGING_PAGE_TOOLS = new Set([
   'browser_press',
   'browser_hover',
   'browser_form_input',
+  'browser_drag',
+  'browser_upload',
   'browser_scroll',
   'browser_navigate',
   'browser_back',
@@ -116,6 +139,10 @@ export function isTabManagementTool(name: string): boolean {
 export interface TabManagementContext {
   /** Skip all browser approval prompts after the user enables unrestricted access. */
   unrestrictedAccess: boolean
+  /** The user allows browser_screenshot (settings default: on). */
+  allowScreenshots?: boolean
+  /** Route clicks, drags and key presses through chrome.debugger as trusted input. */
+  trustedInput?: boolean
   /** Controlled tab for the calling session, when one still exists. */
   controlledTabId?: number
   /** Rebind subsequent tools to one existing tab without activating it. */
@@ -260,6 +287,134 @@ async function dispatchTabNativeTool(
   return { ok: true, result: { text, navigationPending: true } }
 }
 
+const TRUSTED_INPUT_TOOLS = new Set(['browser_click', 'browser_press', 'browser_hover', 'browser_drag'])
+
+interface ElementCenter {
+  x: number
+  y: number
+  width: number
+  height: number
+  label: string
+}
+
+/** Scroll an inventoried element into view and get its viewport center. */
+async function elementCenter(tabId: number, frame: TabFrame, call: ToolCall, args: Record<string, unknown>): Promise<ElementCenter | ToolAnswer> {
+  const response = await sendAction(tabId, { ...call, name: 'browser_element_rect', args }, frame)
+  if (!isToolAnswer(response)) return unavailable('The page content script returned an invalid response.')
+  if (!response.ok) return response
+  const text = answerText(response)
+  try {
+    return JSON.parse(text ?? '') as ElementCenter
+  } catch {
+    return unavailable('The element position could not be read.')
+  }
+}
+
+function isAnswer<T extends object>(value: T | ToolAnswer): value is ToolAnswer {
+  return typeof (value as ToolAnswer).ok === 'boolean'
+}
+
+/**
+ * Run click / press / hover / drag as trusted input through the debugger.
+ * Element targets are resolved to viewport centers by the content script;
+ * after the input, the content script reports the settled page delta.
+ * Returns undefined when the debugger cannot be attached, so the caller can
+ * fall back to synthetic events.
+ */
+async function trustedInputDispatch(
+  tabId: number,
+  frames: TabFrame[],
+  call: ToolCall,
+  budget: ContentBudget,
+  signal?: AbortSignal,
+  targetStillAllowed?: () => boolean,
+  includeActionDelta: boolean = false,
+  commitAction?: () => void,
+): Promise<ToolAnswer | undefined> {
+  const frame = frames.find((candidate) => candidate.frameId === 0)
+  if (frame === undefined) return undefined
+  try {
+    await attachDebugger(tabId)
+  } catch {
+    return undefined
+  }
+  if (isCancelled(call, signal)) return cancelled()
+  if (targetStillAllowed?.() === false) return targetChanged()
+  const pointFor = async (args: Record<string, unknown>): Promise<{ x: number; y: number; label: string } | ToolAnswer> => {
+    if (typeof args.x === 'number' && typeof args.y === 'number') {
+      return { x: Math.round(args.x), y: Math.round(args.y), label: `(${Math.round(args.x)}, ${Math.round(args.y)})` }
+    }
+    return elementCenter(tabId, frame, call, args)
+  }
+  let summary: string
+  const previous = snapshotDocumentsByTab.get(tabId)?.get(0) === frameDocumentKey(frame)
+  try {
+    switch (call.name) {
+      case 'browser_click': {
+        const point = await pointFor(call.args)
+        if (isAnswer(point)) return point
+        commitAction?.()
+        await debuggerClick(tabId, { x: point.x, y: point.y, button: call.args.button === 'right' ? 'right' : 'left', clickCount: call.args.count === 2 ? 2 : 1 })
+        summary = `${call.args.count === 2 ? 'Double-clicked' : call.args.button === 'right' ? 'Right-clicked' : 'Clicked'} ${point.label} (trusted input).`
+        break
+      }
+      case 'browser_hover': {
+        const point = await pointFor(call.args)
+        if (isAnswer(point)) return point
+        commitAction?.()
+        await debuggerHover(tabId, point.x, point.y)
+        summary = `Hovered ${point.label} (trusted input).`
+        break
+      }
+      case 'browser_drag': {
+        const from = await pointFor(call.args)
+        if (isAnswer(from)) return from
+        const toArgs = typeof call.args.toIndex === 'number' ? { index: call.args.toIndex } : { x: call.args.toX, y: call.args.toY }
+        if (typeof toArgs.index !== 'number' && (typeof toArgs.x !== 'number' || typeof toArgs.y !== 'number')) {
+          return { ok: false, error: { code: 'bad-args', message: 'Provide toIndex, or toX and toY, for the drop target.' } }
+        }
+        const to = await pointFor(toArgs as Record<string, unknown>)
+        if (isAnswer(to)) return to
+        commitAction?.()
+        await debuggerDrag(tabId, from, to)
+        summary = `Dragged ${from.label} to ${to.label} (trusted input).`
+        break
+      }
+      case 'browser_press': {
+        const combo = typeof call.args.key === 'string' ? call.args.key : ''
+        if (combo === '') return { ok: false, error: { code: 'bad-args', message: 'key must not be empty.' } }
+        const chord = parseKeyCombo(combo)
+        if (chord.key === '') return { ok: false, error: { code: 'bad-args', message: `"${combo}" names modifiers only; add the key to press.` } }
+        commitAction?.()
+        await debuggerPress(tabId, chord)
+        summary = `Sent key "${combo}" (trusted input).`
+        break
+      }
+      default:
+        return undefined
+    }
+  } catch (error: unknown) {
+    const detail = error instanceof Error ? error.message : String(error)
+    return { ok: false, error: { code: 'action-failed', message: `Trusted input failed: ${detail}` } }
+  }
+  if (isCancelled(call, signal)) return cancelled()
+  // Let the page settle and report the delta through the content script.
+  let body = summary
+  try {
+    const settle = await sendAction(tabId, { ...call, name: 'browser_wait', args: {} }, frame, previous && includeActionDelta ? budget : undefined, previous && includeActionDelta)
+    if (isToolAnswer(settle) && settle.ok) {
+      const pageContent = answerPageContent(settle)
+      if (pageContent !== undefined) body = wrapActionDelta(summary, pageContent, frame, budget.maxChars)
+    }
+  } catch {
+    // The input may have navigated the page; the summary still stands.
+  }
+  const dialogs = await drainDialogs(tabId)
+  if (dialogs !== '') body = `${body}\n\nDialogs raised by this action (answered automatically; use browser_handle_dialog to change the answer before retrying):\n${dialogs}`
+  return { ok: true, result: { text: body } }
+}
+
+
 /**
  * Capture the controlled tab's viewport. The capture API photographs the
  * window, so the controlled tab must be its active tab; otherwise the model
@@ -273,9 +428,19 @@ async function screenshotTab(
   call: ToolCall,
   signal?: AbortSignal,
   budget?: ContentBudget,
+  trustedInput: boolean = false,
 ): Promise<ToolAnswer> {
   if (tab.id === undefined) return unavailable('The controlled tab no longer exists.')
-  if (!tab.active) {
+  let viaDebugger = false
+  if (!tab.active && trustedInput) {
+    try {
+      await attachDebugger(tab.id)
+      viaDebugger = true
+    } catch {
+      // Fall back to the visibility requirement below.
+    }
+  }
+  if (!tab.active && !viaDebugger) {
     return {
       ok: false,
       error: {
@@ -298,7 +463,7 @@ async function screenshotTab(
   if (isCancelled(call, signal)) return cancelled()
   let dataUrl: string
   try {
-    dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'png' })
+    dataUrl = viaDebugger ? await debuggerScreenshot(tab.id) : await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'png' })
   } catch (error: unknown) {
     const detail = error instanceof Error ? error.message : String(error)
     return unavailable(`The browser refused to capture this tab: ${detail}`)
@@ -505,6 +670,7 @@ async function dispatchOnce(
   includeActionDelta: boolean = false,
   commitAction?: () => void,
   rollbackActionCommit?: () => void,
+  trustedInput: boolean = false,
 ): Promise<ToolAnswer> {
   if (isCancelled(call, signal)) return cancelled()
   if (targetStillAllowed?.() === false) return targetChanged()
@@ -513,7 +679,12 @@ async function dispatchOnce(
     const tab = await chrome.tabs.get(tabId)
     if (isCancelled(call, signal)) return cancelled()
     if (targetStillAllowed?.() === false) return targetChanged()
-    return screenshotTab(tab, frames.find((frame) => frame.frameId === 0), call, signal, budget)
+    return screenshotTab(tab, frames.find((frame) => frame.frameId === 0), call, signal, budget, trustedInput)
+  }
+  if (trustedInput && TRUSTED_INPUT_TOOLS.has(call.name) && requestedFrame(call.args) === 0) {
+    const trusted = await trustedInputDispatch(tabId, frames, call, budget, signal, targetStillAllowed, includeActionDelta, commitAction)
+    if (trusted !== undefined) return trusted
+    // Attachment refused (permission missing, DevTools open): fall through to synthetic events.
   }
 
   const frameId = requestedFrame(call.args)
@@ -576,15 +747,128 @@ async function dispatchOnce(
   } else {
     navigationWait?.cancel()
   }
+  if (call.name === 'browser_find') {
+    // Found elements are addressable like snapshot entries; record the
+    // document so a following click/type passes the reference check.
+    let documents = snapshotDocumentsByTab.get(tabId)
+    if (documents === undefined) {
+      documents = new Map()
+      snapshotDocumentsByTab.set(tabId, documents)
+    }
+    documents.set(frameId, frameDocumentKey(frame))
+  }
   if (call.name === 'browser_get_text' || call.name === 'browser_find') {
     return { ok: true, result: { text: wrapUntrustedContent(text, budget.maxChars) } }
   }
   const pageContent = requestPageDelta ? answerPageContent(response) : undefined
-  return {
-    ok: true,
-    result: {
-      text: pageContent === undefined ? text : wrapActionDelta(text, pageContent, frame, budget.maxChars),
-    },
+  let body = pageContent === undefined ? text : wrapActionDelta(text, pageContent, frame, budget.maxChars)
+  if (stateChanging) {
+    const dialogs = await drainDialogs(tabId)
+    if (dialogs !== '') body = `${body}\n\nDialogs raised by this action (answered automatically; use browser_handle_dialog to change the answer before retrying):\n${dialogs}`
+  }
+  return { ok: true, result: { text: body } }
+}
+
+/** Dialogs the page raised since the last drain, rendered as untrusted text; empty when none. */
+async function drainDialogs(tabId: number): Promise<string> {
+  try {
+    const records = await readDialogs(tabId, true)
+    if (records.length === 0) return ''
+    return wrapUntrustedContent(describeDialogs(records), 4_000)
+  } catch {
+    return ''
+  }
+}
+
+const MAIN_WORLD_TOOLS = new Set(['browser_handle_dialog', 'browser_console', 'browser_network', 'browser_evaluate'])
+/** Read-only tools that must not modify the page; hooks are installed by the first action instead. */
+const HOOK_FREE_TOOLS = new Set(['browser_snapshot', 'browser_get_text', 'browser_find', 'browser_wait_for', 'browser_screenshot', 'browser_wait', 'browser_scroll'])
+const FULL_CONTROL_TOOLS = new Set(['browser_console', 'browser_network', 'browser_evaluate'])
+
+/** Tools implemented by executing in the page's main world rather than the content script. */
+async function mainWorldTool(
+  tabId: number,
+  call: ToolCall,
+  unrestrictedAccess: boolean,
+  budget: ContentBudget,
+  commitAction?: () => void,
+  trustedInput: boolean = false,
+): Promise<ToolAnswer> {
+  if (FULL_CONTROL_TOOLS.has(call.name) && !unrestrictedAccess) {
+    return {
+      ok: false,
+      error: {
+        code: 'action-failed',
+        message: `${call.name} is available only when the user has enabled "Allow the model full browser control" in the extension settings.`,
+      },
+    }
+  }
+  try {
+    switch (call.name) {
+      case 'browser_handle_dialog': {
+        const action = call.args.action === 'accept' ? 'accept' : 'dismiss'
+        const text = typeof call.args.text === 'string' ? call.args.text : undefined
+        const once = call.args.once !== false
+        commitAction?.()
+        const applied = await applyDialogPolicy(tabId, { action, ...(text === undefined ? {} : { text }), once })
+        if (!applied) return unavailable('Dialog handling is not installed on this page; retry after the page finishes loading.')
+        const pending = await drainDialogs(tabId)
+        return {
+          ok: true,
+          result: {
+            text: `The next confirm()/prompt() will be ${action === 'accept' ? 'accepted' : 'dismissed'}${text !== undefined ? ` with "${text}"` : ''}${once ? ' (this once)' : ' (until changed)'}; alert() is always closed.`
+              + (pending === '' ? '' : `\n\nDialogs already raised since the last check:\n${pending}`),
+          },
+        }
+      }
+      case 'browser_console': {
+        const records = await readConsole(tabId, call.args.clear === true)
+        if (records === null) return unavailable('Console capture is not installed on this page yet; capture starts with the first browser action on it.')
+        const level = typeof call.args.level === 'string' ? call.args.level : undefined
+        const filtered = level === undefined ? records : records.filter((record) => record.level === level || (level === 'error' && record.level === 'error'))
+        const lines = filtered.slice(-200).map((record) => `[${new Date(record.at).toISOString().slice(11, 23)}] ${record.level}: ${record.text}`)
+        const text = lines.length === 0
+          ? 'No console output captured since capture started (page load output before the first browser action is not included).'
+          : lines.join('\n')
+        return { ok: true, result: { text: wrapUntrustedContent(text, budget.maxChars) } }
+      }
+      case 'browser_network': {
+        const records = await readNetwork(tabId, call.args.clear === true)
+        if (records === null) return unavailable('Network capture is not installed on this page yet; capture starts with the first browser action on it.')
+        const filter = typeof call.args.urlContains === 'string' ? call.args.urlContains : undefined
+        const filtered = filter === undefined ? records : records.filter((record) => record.url.includes(filter))
+        const lines = filtered.slice(-200).map((record) =>
+          `[${new Date(record.at).toISOString().slice(11, 23)}] ${record.kind} ${record.method} ${record.url} → ${record.status === 0 ? 'failed' : record.status} (${record.ms}ms)`)
+        const text = lines.length === 0
+          ? 'No fetch/XHR requests captured since capture started (requests before the first browser action, and non-JS loads like images or navigations, are not included).'
+          : lines.join('\n')
+        return { ok: true, result: { text: wrapUntrustedContent(text, budget.maxChars) } }
+      }
+      case 'browser_evaluate': {
+        const code = typeof call.args.expression === 'string' ? call.args.expression.trim() : ''
+        if (code === '') return { ok: false, error: { code: 'bad-args', message: 'expression must be a non-empty JavaScript expression.' } }
+        commitAction?.()
+        let result = await evaluateExpression(tabId, code)
+        if (!result.ok && trustedInput && /unsafe-eval|Content Security Policy|EvalError/i.test(result.error)) {
+          // CDP evaluation is exempt from the page CSP.
+          const firstError = result.error
+          try {
+            await attachDebugger(tabId)
+            result = await debuggerEvaluate(tabId, code)
+          } catch (error: unknown) {
+            result = { ok: false, error: `${firstError}; debugger fallback failed: ${error instanceof Error ? error.message : String(error)}` }
+          }
+        }
+        if (!result.ok) return { ok: false, error: { code: 'action-failed', message: `Evaluation failed: ${result.error}` } }
+        const rendered = typeof result.value === 'string' ? result.value : JSON.stringify(result.value, null, 2)
+        return { ok: true, result: { text: wrapUntrustedContent(rendered ?? 'null', budget.maxChars) } }
+      }
+      default:
+        return unavailable(`${call.name} is not a main-world tool.`)
+    }
+  } catch (error: unknown) {
+    const detail = error instanceof Error ? error.message : String(error)
+    return unavailable(`The page refused the operation: ${detail}`)
   }
 }
 
@@ -780,8 +1064,11 @@ export async function dispatchToolCall(
   if (targetStillAllowed?.() === false) return targetChanged()
   const frameError = validateFrameTarget(call, frames)
   if (frameError !== undefined) return frameError
+  if (call.name === 'browser_screenshot' && tabManagement.allowScreenshots === false) {
+    return { ok: false, error: { code: 'action-failed', message: 'Screenshots are disabled in the extension settings ("Allow screenshots").' } }
+  }
   if (!isInjectablePage(tab.url) && call.name === 'browser_screenshot') {
-    return screenshotTab(await chrome.tabs.get(tab.id), undefined, call, signal)
+    return screenshotTab(await chrome.tabs.get(tab.id), undefined, call, signal, undefined, tabManagement.trustedInput === true)
   }
   if (!isInjectablePage(tab.url) && !TAB_NATIVE_TOOLS.has(call.name)) {
     return unavailable('The current page DOM is protected by the browser. Only snapshot metadata, navigate, back, forward, and reload are available on this page.')
@@ -817,6 +1104,22 @@ export async function dispatchToolCall(
     return await dispatchTabNativeTool(tab.id, tab.url, tab.title, tab.windowId, call, effectiveBudget, signal, targetStillAllowed, tabManagement.commitAction)
       ?? unavailable('The current page DOM is protected by the browser.')
   }
+  // Dialog interception and console/network capture live in the page's
+  // main world; install them before the first action so a confirm() raised
+  // by that action is answered instead of freezing the tab. Pure reads leave
+  // the page untouched.
+  if (!HOOK_FREE_TOOLS.has(call.name)) {
+    const mainFrame = executionFrames.find((frame) => frame.frameId === 0)
+    try {
+      await ensurePageHooks(tab.id, mainFrame?.documentId)
+    } catch {
+      // Pages that refuse script injection still get the plain content-script path.
+    }
+    if (isCancelled(call, signal)) return cancelled()
+  }
+  if (MAIN_WORLD_TOOLS.has(call.name)) {
+    return mainWorldTool(tab.id, call, tabManagement.unrestrictedAccess, effectiveBudget, tabManagement.commitAction, tabManagement.trustedInput === true)
+  }
   try {
     return await dispatchOnce(
       tab.id,
@@ -828,6 +1131,7 @@ export async function dispatchToolCall(
       tabManagement.unrestrictedAccess || sharePageContent === 'auto',
       tabManagement.commitAction,
       tabManagement.rollbackActionCommit,
+      tabManagement.trustedInput === true,
     )
   } catch (error: unknown) {
     if (isCancelled(call, signal)) return cancelled()
@@ -888,6 +1192,8 @@ function validateFrameTarget(call: ToolCall, frames: TabFrame[]): ToolAnswer | u
 
 function validateElementTarget(call: ToolCall, tabId: number, frames: TabFrame[]): ToolAnswer | undefined {
   if (call.name !== 'browser_click' && call.name !== 'browser_type') return undefined
+  // Coordinate clicks address the viewport, not an inventory entry.
+  if (call.name === 'browser_click' && typeof call.args.x === 'number' && typeof call.args.y === 'number') return undefined
   const frameId = requestedFrame(call.args)
   const frame = frames.find((candidate) => candidate.frameId === frameId)
   const snapshotted = snapshotDocumentsByTab.get(tabId)?.get(frameId)

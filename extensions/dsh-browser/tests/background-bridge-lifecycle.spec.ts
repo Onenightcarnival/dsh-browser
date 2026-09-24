@@ -64,7 +64,7 @@ function mockChrome(options: {
   tabQuery?: (queryInfo: chrome.tabs.QueryInfo) => Promise<chrome.tabs.Tab[]>
   tabRemove?: (tabId: number) => Promise<void>
   tabSendMessage?: (tabId: number, message: unknown) => Promise<unknown>
-  executeScript?: () => Promise<unknown>
+  executeScript?: (injection?: { files?: string[]; func?: unknown }) => Promise<unknown>
 } = {}) {
   const onConnect = chromeEvent<[chrome.runtime.Port]>()
   const onAlarm = chromeEvent<[chrome.alarms.Alarm]>()
@@ -764,7 +764,8 @@ describe('background bridge lifecycle', () => {
         actionMessages.push(message)
         throw new Error('Could not establish connection. Receiving end does not exist.')
       },
-      executeScript: async () => { await injection },
+      // The main-world hook install resolves at once; only content.js injection is held.
+      executeScript: async (details) => { if (details?.files !== undefined) await injection; return [] },
     })
     vi.stubGlobal('WebSocket', FakeWebSocket)
     await import('../src/background/index.ts')
@@ -787,7 +788,9 @@ describe('background bridge lifecycle', () => {
       args: { key: 'Enter' },
       expiresAt: Date.now() + 10_000,
     })
-    await vi.waitFor(() => { expect(chrome.scripting.executeScript).toHaveBeenCalledOnce() })
+    await vi.waitFor(() => {
+      expect(chrome.scripting.executeScript).toHaveBeenCalledWith(expect.objectContaining({ files: ['content.js'] }))
+    })
 
     panel.onMessage.emit({
       type: 'settings',

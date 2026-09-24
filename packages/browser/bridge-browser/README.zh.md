@@ -54,14 +54,17 @@ dsh 的**浏览器操作桥**：在宿主 webserver 上挂载一个 **token 认�
 
 | 工具 | 用途 |
 |---|---|
-| `browser_snapshot` | 结构化文本快照（标题/URL/正文/清单/表单）；`delta: true` 只返回变化。 |
-| `browser_click` / `browser_type` / `browser_press` | 按稳定编号操作清单元素。 |
+| `browser_snapshot` / `browser_find` / `browser_get_text` | 结构化文本快照（`delta: true` 只返回变化）；按文本/角色/选择器查找；整页或局部转为 Markdown。 |
+| `browser_screenshot` | 带编号标注的视口 PNG，以图片块返回（模型路由需接受图片输入）。 |
+| `browser_click` / `browser_type` / `browser_form_input` / `browser_press` / `browser_hover` / `browser_drag` / `browser_upload` | 按稳定编号或视口坐标操作清单元素；上传只读取会话工作目录内的文件。 |
 | `browser_scroll` / `browser_navigate` / `browser_open_tab` / `browser_back` / `browser_forward` / `browser_reload` | 页面移动。 |
-| `browser_get_text` / `browser_wait` | 读区域文本 / 稳定检测。 |
+| `browser_list_tabs` / `browser_follow_tab` / `browser_close_tab` | 标签页管理。 |
+| `browser_wait` / `browser_wait_for` / `browser_batch` / `browser_handle_dialog` | 稳定检测、条件等待、单次往返最多 25 步、弹窗应答。 |
+| `browser_console` / `browser_network` / `browser_evaluate` | 控制台/网络捕获与 JavaScript 求值；用户未开启完全控制时扩展一律拒绝。 |
 
 ## 模型体验
 
-- **Token 影响**：一次 `browser_snapshot`（默认 32k 字符）对常见英文文本约为 8–10k token，具体取决于语言和分词器；delta 快照只需零头。系统提示段落引导模型按需快照而非囤积页面文本。
+- **Token 影响**：一次 `browser_snapshot`（默认预算 200k 字符、400 项，常见页面远小于此）对常见英文页面约为 8–10k token，具体取决于语言和分词器；delta 快照只需零头。系统提示段落引导模型按需快照而非囤积页面文本。
 - **KV 缓存影响**：无（快照不做服务端缓存）。
 - **延迟**：每次动作等待扩展在真实页面执行 + 稳定检测（通常 0.2–2s；导航最长 5s）。
 - **失败模式**：`bridge-closed`（扩展未连接）、`timeout`、`no-active-tab`、`content-unavailable`（页面需刷新）、`action-failed`（编号过期——模型应重新快照）。

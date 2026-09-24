@@ -76,6 +76,10 @@ export interface PanelCopy {
     unrestrictedBrowserAccessHelp: string
     approvalNotifications: string
     approvalNotificationsHelp: string
+    allowScreenshots: string
+    allowScreenshotsHelp: string
+    trustedInput: string
+    trustedInputHelp: string
     autoResumeSession: string
     autoResumeSessionHelp: string
     trustedOrigins: string
@@ -263,6 +267,13 @@ const EN: PanelCopy = {
       browser_form_input: 'Fill form',
       browser_wait_for: 'Wait for condition',
       browser_screenshot: 'Take screenshot',
+      browser_batch: 'Run several steps',
+      browser_drag: 'Drag element',
+      browser_upload: 'Upload files',
+      browser_handle_dialog: 'Answer page dialog',
+      browser_console: 'Read console output',
+      browser_network: 'Read network requests',
+      browser_evaluate: 'Run JavaScript',
     },
     overflow: (shown, total) => `${shown.join(' → ')} → ${total - shown.length} more`,
   },
@@ -315,6 +326,10 @@ const EN: PanelCopy = {
     unrestrictedBrowserAccessHelp: 'Let the model read every HTTP(S) page, inspect all open tab titles and URLs, and perform actions—including following and closing tabs—without confirmation. Browser-protected page content remains inaccessible.',
     approvalNotifications: 'Browser approval notifications',
     approvalNotificationsHelp: 'Notify you when an approval arrives while the side panel is closed',
+    allowScreenshots: 'Allow screenshots',
+    allowScreenshotsHelp: 'Let the model capture the controlled tab with browser_screenshot. Screenshots follow the page-content sharing setting, but passwords typed into the page cannot be masked in an image.',
+    trustedInput: 'High-fidelity input (debugger)',
+    trustedInputHelp: 'Send coordinate clicks and key presses through Chrome\'s debugger so pages receive real input events (needed for canvas apps, keyboard navigation, and some editors). Chrome shows a “started debugging” bar on the tab while it is in use.',
     autoResumeSession: "Resume this page's conversation",
     autoResumeSessionHelp: 'Reopen the conversation associated with this tab and page path; other pages start a new conversation',
     trustedOrigins: 'Always-allowed domains',
@@ -502,6 +517,13 @@ const ZH: PanelCopy = {
       browser_form_input: '填写表单',
       browser_wait_for: '等待条件',
       browser_screenshot: '截图',
+      browser_batch: '批量执行步骤',
+      browser_drag: '拖拽元素',
+      browser_upload: '上传文件',
+      browser_handle_dialog: '应答页面弹窗',
+      browser_console: '读取控制台输出',
+      browser_network: '读取网络请求',
+      browser_evaluate: '执行 JavaScript',
     },
     overflow: (shown, total) => `${shown.join(' → ')} 等${total}个工具`,
   },
@@ -554,6 +576,10 @@ const ZH: PanelCopy = {
     unrestrictedBrowserAccessHelp: '模型无需确认即可读取所有 HTTP(S) 页面、查看全部已打开标签页的标题和链接，并执行包括跟随、关闭标签页在内的所有操作。浏览器受保护页面的内容仍不可访问。',
     approvalNotifications: '浏览器审批通知',
     approvalNotificationsHelp: '侧栏关闭时收到审批请求，通过系统通知提醒你',
+    allowScreenshots: '允许截图',
+    allowScreenshotsHelp: '允许模型用 browser_screenshot 截取受控标签页。截图遵循页面内容共享设置，但图片里无法给密码框打码。',
+    trustedInput: '高保真输入（调试器）',
+    trustedInputHelp: '坐标点击和按键经 Chrome 调试器发送，页面收到的是真实输入事件（canvas 应用、键盘导航和部分编辑器需要）。使用期间标签页顶部会显示"正在调试"提示条。',
     autoResumeSession: '续接当前页面会话',
     autoResumeSessionHelp: '重新打开当前标签页此页面的会话；其他页面会新建会话',
     trustedOrigins: '永久免确认域名',

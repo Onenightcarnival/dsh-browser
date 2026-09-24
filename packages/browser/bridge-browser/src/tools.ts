@@ -12,6 +12,8 @@
  * @module
  */
 
+import { readFile, stat } from 'node:fs/promises'
+import { basename, extname, isAbsolute, relative, resolve as resolvePath } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import { defineTool, type ToolDefinition, type ToolExecution, type ToolExecutionResult, type ToolRunContext } from '@deepseek-ai/dsh-tools'
@@ -74,7 +76,63 @@ export const BROWSER_TOOL_NAMES = [
   'browser_get_text',
   'browser_wait',
   'browser_wait_for',
+  'browser_batch',
+  'browser_drag',
+  'browser_upload',
+  'browser_handle_dialog',
+  'browser_console',
+  'browser_network',
+  'browser_evaluate',
 ] as const
+
+/** Per-file and per-call byte caps for browser_upload. */
+const MAX_UPLOAD_FILE_BYTES = 20 * 1024 * 1024
+const MAX_UPLOAD_TOTAL_BYTES = 50 * 1024 * 1024
+const MAX_BATCH_STEPS = 25
+
+const MEDIA_TYPES: Record<string, string> = {
+  '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.svg': 'image/svg+xml',
+  '.pdf': 'application/pdf', '.txt': 'text/plain', '.md': 'text/markdown', '.csv': 'text/csv', '.json': 'application/json',
+  '.zip': 'application/zip', '.doc': 'application/msword', '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  '.xls': 'application/vnd.ms-excel', '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  '.ppt': 'application/vnd.ms-powerpoint', '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  '.mp4': 'video/mp4', '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.html': 'text/html', '.xml': 'application/xml',
+}
+
+/** Session working directory of the calling Agent, when the runtime exposes it. */
+function sessionCwd(exec: Pick<ToolRunContext, 'agent'>): string | undefined {
+  const agent = exec.agent as { session?: { header?: { cwd?: unknown } } } | undefined
+  const cwd = agent?.session?.header?.cwd
+  return typeof cwd === 'string' && cwd !== '' ? cwd : undefined
+}
+
+/**
+ * Read the files the model named, confined to the session's working
+ * directory, and encode them for the extension. The agent already has file
+ * tools scoped to that directory; uploads must not widen what it can reach.
+ */
+async function readUploadFiles(exec: Pick<ToolRunContext, 'agent'>, paths: readonly string[]): Promise<Array<{ name: string; mediaType: string; data: string }>> {
+  const cwd = sessionCwd(exec)
+  if (cwd === undefined) throw new Error('browser_upload needs a session working directory to resolve file paths')
+  const root = resolvePath(cwd)
+  const files: Array<{ name: string; mediaType: string; data: string }> = []
+  let total = 0
+  for (const requested of paths) {
+    const absolute = isAbsolute(requested) ? resolvePath(requested) : resolvePath(root, requested)
+    const rel = relative(root, absolute)
+    if (rel.startsWith('..') || isAbsolute(rel)) {
+      throw new Error(`"${requested}" is outside the session working directory (${root}); only files under it can be uploaded`)
+    }
+    const info = await stat(absolute)
+    if (!info.isFile()) throw new Error(`"${requested}" is not a regular file`)
+    if (info.size > MAX_UPLOAD_FILE_BYTES) throw new Error(`"${requested}" is ${info.size} bytes; the per-file limit is ${MAX_UPLOAD_FILE_BYTES}`)
+    total += info.size
+    if (total > MAX_UPLOAD_TOTAL_BYTES) throw new Error(`the files exceed the ${MAX_UPLOAD_TOTAL_BYTES}-byte total limit`)
+    const data = await readFile(absolute)
+    files.push({ name: basename(absolute), mediaType: MEDIA_TYPES[extname(absolute).toLowerCase()] ?? 'application/octet-stream', data: data.toString('base64') })
+  }
+  return files
+}
 
 /**
  * Register the browser tools on `ctx.tools`. Disposers are returned for the
@@ -101,8 +159,12 @@ export function registerBrowserTools(
   }
   const call = async (exec: Pick<ToolRunContext, 'agent' | 'signal'>, name: string, args: Record<string, unknown>): Promise<TextResult> =>
     normalizeTextResult(await raw(exec, name, args), name)
+  const bridgeCall = (exec: Pick<ToolRunContext, 'agent' | 'signal'>, name: string, args: Record<string, unknown>, timeoutMs: number, sessionId?: string): Promise<unknown> =>
+    sessionId === undefined
+      ? bridge.requestTool(name, args, exec.signal, timeoutMs)
+      : bridge.requestTool(name, args, exec.signal, timeoutMs, sessionId)
 
-  for (const tool of [...defineTools(call, options), screenshotTool(ctx, raw, options)]) {
+  for (const tool of [...defineTools(call, options, bridgeCall), screenshotTool(ctx, raw, options)]) {
     disposers.set(tool.name, ctx.tools.register(tool))
   }
   return disposers
@@ -173,7 +235,9 @@ interface Call {
 }
 
 /** The v1 tool set, model-perspective contracts only (no transport vocabulary). */
-function defineTools(call: Call, options: BrowserToolsOptions): ToolDefinition[] {
+type BridgeCall = (exec: Pick<ToolRunContext, 'agent' | 'signal'>, name: string, args: Record<string, unknown>, timeoutMs: number, sessionId?: string) => Promise<unknown>
+
+function defineTools(call: Call, options: BrowserToolsOptions, bridgeCall: BridgeCall): ToolDefinition[] {
   const snapshot = (): ToolDefinition => defineTool({
     name: 'browser_snapshot',
     description: `Read the page and accessible iframes as structured text: title, URL, main content, and a numbered inventory of interactive elements (role, name, state, link target, select options) including elements inside open shadow roots. Element indices are the targets for every other tool. Use frame for iframe targets, region to focus on a CSS selector, and delta=true for changes since the last snapshot. ${UNTRUSTED_CONTENT_WARNING}`,
@@ -330,20 +394,140 @@ function defineTools(call: Call, options: BrowserToolsOptions): ToolDefinition[]
 
   const getText = (): ToolDefinition => defineTool({
     name: 'browser_get_text',
-    description: `Read plain text from the page or a selector. ${UNTRUSTED_CONTENT_WARNING}`,
+    description: `Read the page's content region (or a CSS selector) as Markdown that keeps headings, lists, tables, links and code; format="plain" returns flat text instead. Use it to read articles, docs and data tables; use browser_snapshot for controls. ${UNTRUSTED_CONTENT_WARNING}`,
     parameters: {
-      selector: { type: 'string', description: 'CSS selector. Omit to read the whole page.' },
+      selector: { type: 'string', description: 'CSS selector (searched through shadow roots). Omit for the main content region.' },
+      format: { type: 'string', enum: ['markdown', 'plain'], description: 'Output format. Defaults to markdown.' },
       frame: FRAME_PARAMETER,
     },
     timeoutMs: options.toolTimeoutMs,
     output: TEXT_OUTPUT,
     execute: (args, exec) => {
-      const a = args as { selector?: string; frame?: number }
+      const a = args as { selector?: string; format?: string; frame?: number }
       return call(exec, 'browser_get_text', {
         ...a.selector !== undefined ? { selector: a.selector } : {},
+        ...a.format !== undefined ? { format: a.format } : {},
         ...a.frame !== undefined ? { frame: a.frame } : {},
       })
     },
+  })
+
+  const batch = (): ToolDefinition => defineTool({
+    name: 'browser_batch',
+    description: `Run up to ${MAX_BATCH_STEPS} browser tool steps in one round trip, in order, stopping at the first failure; every step still goes through the same checks it would alone. Use it for known sequences such as type → press Enter → wait_for. browser_screenshot and nested batches are not allowed as steps.`,
+    parameters: {
+      steps: {
+        type: 'array',
+        required: true,
+        description: 'Steps in execution order.',
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            tool: { type: 'string', required: true, description: 'A browser_* tool name.' },
+            args: { type: 'object', additionalProperties: true, description: 'That tool\'s arguments.' },
+          },
+        },
+      },
+    },
+    timeoutMs: options.toolTimeoutMs * 3,
+    output: TEXT_OUTPUT,
+    execute: async (args, exec) => {
+      const a = args as { steps: Array<{ tool: string; args?: Record<string, unknown> }> }
+      const sessionId = exec.agent === undefined ? undefined : String(exec.agent.id)
+      const result = sessionId === undefined
+        ? await bridgeCall(exec, 'browser_batch', { steps: a.steps }, options.toolTimeoutMs * 3)
+        : await bridgeCall(exec, 'browser_batch', { steps: a.steps }, options.toolTimeoutMs * 3, sessionId)
+      return normalizeTextResult(result, 'browser_batch')
+    },
+  })
+
+  const drag = (): ToolDefinition => defineTool({
+    name: 'browser_drag',
+    description: 'Drag an element (by index or viewport x/y) and drop it on another element (toIndex) or at viewport coordinates (toX/toY). Dispatches both HTML5 drag-and-drop and pointer sequences.',
+    parameters: {
+      index: { type: 'number', description: 'Source element index. Omit when using x/y.' },
+      x: { type: 'number', description: 'Source viewport x; requires y.' },
+      y: { type: 'number', description: 'Source viewport y; requires x.' },
+      toIndex: { type: 'number', description: 'Drop target element index.' },
+      toX: { type: 'number', description: 'Drop viewport x; requires toY.' },
+      toY: { type: 'number', description: 'Drop viewport y; requires toX.' },
+      frame: FRAME_PARAMETER,
+    },
+    timeoutMs: options.toolTimeoutMs,
+    output: TEXT_OUTPUT,
+    execute: (args, exec) => call(exec, 'browser_drag', args as Record<string, unknown>),
+  })
+
+  const upload = (): ToolDefinition => defineTool({
+    name: 'browser_upload',
+    description: 'Attach files from the session working directory to a file input (by index; a button or drop zone that wraps a hidden file input also works). Paths are relative to the working directory; files outside it are refused. 20 MB per file, 50 MB per call.',
+    parameters: {
+      index: { type: 'number', required: true, description: 'Index of the file input or its upload control.' },
+      paths: { type: 'array', required: true, description: 'Files to attach, relative to the session working directory.', items: { type: 'string' } },
+      frame: FRAME_PARAMETER,
+    },
+    timeoutMs: options.toolTimeoutMs * 2,
+    output: TEXT_OUTPUT,
+    execute: async (args, exec) => {
+      const a = args as { index: number; paths: string[]; frame?: number }
+      if (a.paths.length === 0) throw new Error('paths must list at least one file')
+      const files = await readUploadFiles(exec, a.paths)
+      const payload = { index: a.index, files, ...a.frame !== undefined ? { frame: a.frame } : {} }
+      const sessionId = exec.agent === undefined ? undefined : String(exec.agent.id)
+      const result = sessionId === undefined
+        ? await bridgeCall(exec, 'browser_upload', payload, options.toolTimeoutMs * 2)
+        : await bridgeCall(exec, 'browser_upload', payload, options.toolTimeoutMs * 2, sessionId)
+      return normalizeTextResult(result, 'browser_upload')
+    },
+  })
+
+  const handleDialog = (): ToolDefinition => defineTool({
+    name: 'browser_handle_dialog',
+    description: 'Decide how the page\'s next confirm()/prompt() dialog is answered before triggering it (alerts are always closed and reported). By default dialogs are dismissed. Also reports dialogs raised since the last check.',
+    parameters: {
+      action: { type: 'string', required: true, enum: ['accept', 'dismiss'], description: 'OK/accept or Cancel/dismiss.' },
+      text: { type: 'string', description: 'Text to enter when accepting a prompt().' },
+      once: { type: 'boolean', description: 'Apply to the next dialog only (default true) or until changed (false).' },
+    },
+    timeoutMs: options.toolTimeoutMs,
+    output: TEXT_OUTPUT,
+    execute: (args, exec) => call(exec, 'browser_handle_dialog', args as Record<string, unknown>),
+  })
+
+  const consoleTool = (): ToolDefinition => defineTool({
+    name: 'browser_console',
+    description: `Read console output and uncaught errors captured on the controlled page since the first browser action on it. Requires the user's "full browser control" setting. ${UNTRUSTED_CONTENT_WARNING}`,
+    parameters: {
+      level: { type: 'string', enum: ['log', 'info', 'warn', 'error', 'debug'], description: 'Only entries of this level.' },
+      clear: { type: 'boolean', description: 'Clear the buffer after reading.' },
+    },
+    timeoutMs: options.toolTimeoutMs,
+    output: TEXT_OUTPUT,
+    execute: (args, exec) => call(exec, 'browser_console', args as Record<string, unknown>),
+  })
+
+  const network = (): ToolDefinition => defineTool({
+    name: 'browser_network',
+    description: `Read fetch/XHR requests (method, URL, status, duration) captured on the controlled page since the first browser action on it. Requires the user's "full browser control" setting. ${UNTRUSTED_CONTENT_WARNING}`,
+    parameters: {
+      urlContains: { type: 'string', description: 'Only requests whose URL contains this substring.' },
+      clear: { type: 'boolean', description: 'Clear the buffer after reading.' },
+    },
+    timeoutMs: options.toolTimeoutMs,
+    output: TEXT_OUTPUT,
+    execute: (args, exec) => call(exec, 'browser_network', args as Record<string, unknown>),
+  })
+
+  const evaluate = (): ToolDefinition => defineTool({
+    name: 'browser_evaluate',
+    description: `Evaluate a JavaScript expression in the page and return its JSON-serializable value. Requires the user's "full browser control" setting; pages with a strict CSP may refuse. Prefer the structured tools; use this for data the page exposes only through scripts. ${UNTRUSTED_CONTENT_WARNING}`,
+    parameters: {
+      expression: { type: 'string', required: true, description: 'A single JavaScript expression (wrap statements in an IIFE).' },
+    },
+    timeoutMs: options.toolTimeoutMs,
+    output: TEXT_OUTPUT,
+    execute: (args, exec) => call(exec, 'browser_evaluate', args as Record<string, unknown>),
   })
 
   const wait = (): ToolDefinition => defineTool({
@@ -452,5 +636,12 @@ function defineTools(call: Call, options: BrowserToolsOptions): ToolDefinition[]
     getText(),
     wait(),
     waitFor(),
+    batch(),
+    drag(),
+    upload(),
+    handleDialog(),
+    consoleTool(),
+    network(),
+    evaluate(),
   ]
 }

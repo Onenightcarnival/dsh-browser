@@ -174,7 +174,9 @@ describe('dispatchToolCall', () => {
     expect(commitAction).toHaveBeenCalledOnce()
     expect(rollbackActionCommit).not.toHaveBeenCalled()
     expect(chromeMock.sendMessage).toHaveBeenCalledOnce()
-    expect(chromeMock.executeScript).not.toHaveBeenCalled()
+    // Only the main-world hook install ran; content.js was not re-injected.
+    expect(chromeMock.executeScript).not.toHaveBeenCalledWith(expect.objectContaining({ files: ['content.js'] }))
+    expect(chromeMock.executeScript).toHaveBeenCalledWith(expect.objectContaining({ world: 'MAIN' }))
   })
 
   it('returns browser-level metadata without injecting into Chrome internal pages', async () => {

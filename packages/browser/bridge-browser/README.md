@@ -54,14 +54,17 @@ Each `respond` carries a globally unique transport id as well as the host intera
 
 | Tool | Purpose |
 |---|---|
-| `browser_snapshot` | Structured text snapshot (title/URL/main/inventory/forms); `delta: true` returns only changes. |
-| `browser_click` / `browser_type` / `browser_press` | Operate inventory items by stable index. |
+| `browser_snapshot` / `browser_find` / `browser_get_text` | Structured text snapshot (`delta: true` returns only changes); search by text/role/selector; page or region as Markdown. |
+| `browser_screenshot` | Annotated viewport PNG delivered as an image block (model route must accept image input). |
+| `browser_click` / `browser_type` / `browser_form_input` / `browser_press` / `browser_hover` / `browser_drag` / `browser_upload` | Operate inventory items by stable index or viewport coordinates; upload reads files from the session working directory only. |
 | `browser_scroll` / `browser_navigate` / `browser_open_tab` / `browser_back` / `browser_forward` / `browser_reload` | Page movement. |
-| `browser_get_text` / `browser_wait` | Read regions / settle detection. |
+| `browser_list_tabs` / `browser_follow_tab` / `browser_close_tab` | Tab management. |
+| `browser_wait` / `browser_wait_for` / `browser_batch` / `browser_handle_dialog` | Settle detection, conditional waits, up to 25 steps per round trip, dialog answers. |
+| `browser_console` / `browser_network` / `browser_evaluate` | Console/network capture and JavaScript evaluation; the extension refuses them unless the user enabled unrestricted browser control. |
 
 ## Model Experience
 
-- **Token effect**: one `browser_snapshot` (default 32k chars) costs roughly 8–10k tokens for typical English text; the exact count depends on language and tokenizer, and delta snapshots cost a fraction of that. The system-prompt section tells the model to snapshot on demand rather than hoard page text.
+- **Token effect**: one `browser_snapshot` (default budget 200k chars, 400 items; typical pages are far smaller) costs roughly 8–10k tokens for a typical English page; the exact count depends on language and tokenizer, and delta snapshots cost a fraction of that. The system-prompt section tells the model to snapshot on demand rather than hoard page text.
 - **KV-cache effect**: none beyond ordinary tool results; snapshots are not cached server-side.
 - **Latency**: each action awaits the extension's real-page execution plus settle detection (typically 0.2–2s; navigation up to 5s).
 - **Failure modes**: `bridge-closed` (extension not connected), `timeout`, `no-active-tab`, `content-unavailable` (page needs a refresh), `action-failed` (stale inventory index — the model should re-snapshot).

@@ -5,13 +5,17 @@ import type { TabFrame } from './frames.ts'
 import type { ApprovalPrompt } from '../security/approval.ts'
 import { getUiLocale, type UiLocale } from '../i18n.ts'
 
-const PAGE_READS = new Set(['browser_snapshot', 'browser_get_text', 'browser_find', 'browser_wait_for', 'browser_screenshot'])
+const PAGE_READS = new Set(['browser_snapshot', 'browser_get_text', 'browser_find', 'browser_wait_for', 'browser_screenshot', 'browser_console', 'browser_network'])
 const STATE_CHANGING_ACTIONS = new Set([
   'browser_click',
   'browser_type',
   'browser_press',
   'browser_hover',
   'browser_form_input',
+  'browser_drag',
+  'browser_upload',
+  'browser_handle_dialog',
+  'browser_evaluate',
   'browser_navigate',
   'browser_open_tab',
   'browser_back',
@@ -25,6 +29,8 @@ function readSummary(name: string, locale: UiLocale): string {
     case 'browser_find': return localized(locale, 'Search the current page for elements', '在当前页面查找元素')
     case 'browser_wait_for': return localized(locale, 'Watch the current page until a condition is met', '监视当前页面直到条件满足')
     case 'browser_screenshot': return localized(locale, 'Capture a screenshot of the visible page (passwords are not masked in images)', '截取当前可见页面的截图（截图中的密码不会被打码）')
+    case 'browser_console': return localized(locale, 'Read the page console output', '读取页面控制台输出')
+    case 'browser_network': return localized(locale, 'Read the page network request log', '读取页面网络请求记录')
     default: return localized(locale, 'Read text from the specified area of the current page', '读取当前页面的指定文本区域')
   }
 }
@@ -140,6 +146,17 @@ function summarizeAction(call: ToolCall, locale: UiLocale): string {
         `填写 ${count} 个表单字段${frame}（内容不会显示在确认框）`,
       )
     }
+    case 'browser_drag': return localized(locale, `Drag element [${index}] to another element or position${frame}`, `拖动元素 [${index}] 到另一个元素或位置${frame}`)
+    case 'browser_upload': {
+      const count = Array.isArray(call.args.paths) ? call.args.paths.length : 0
+      return localized(locale, `Upload ${count} file${count === 1 ? '' : 's'} into element [${index}]${frame}`, `向元素 [${index}] 上传 ${count} 个文件${frame}`)
+    }
+    case 'browser_handle_dialog': return localized(
+      locale,
+      `${call.args.action === 'accept' ? 'Accept' : 'Dismiss'} the page's next confirm/prompt dialog`,
+      `${call.args.action === 'accept' ? '接受' : '取消'}页面下一次弹出的确认/输入框`,
+    )
+    case 'browser_evaluate': return localized(locale, 'Run JavaScript in the page', '在页面中执行 JavaScript')
     case 'browser_press': return localized(
       locale,
       `Press “${safeInline(typeof call.args.key === 'string' ? call.args.key : '')}”${frame}`,

@@ -169,18 +169,22 @@ describe('registerBrowserTools', () => {
     const { ctx, bridge, registered } = makeHarness()
     registerBrowserTools(ctx, bridge, { toolTimeoutMs: 1_000, snapshotMaxChars: 12_000, maxInteractiveItems: 60 })
     const names = registered.map(({ name }) => name)
-    for (const expected of ['browser_snapshot', 'browser_screenshot', 'browser_find', 'browser_form_input', 'browser_hover', 'browser_wait_for']) {
+    for (const expected of [
+      'browser_snapshot', 'browser_screenshot', 'browser_find', 'browser_form_input', 'browser_hover', 'browser_wait_for',
+      'browser_batch', 'browser_drag', 'browser_upload', 'browser_handle_dialog', 'browser_console', 'browser_network', 'browser_evaluate',
+    ]) {
       expect(names).toContain(expected)
     }
     const screenshot = registered.find(({ name }) => name === 'browser_screenshot')!.definition
     expect(typeof screenshot.finalizeContent).toBe('function')
   })
 
-  it('declares cooperative timeoutMs on every tool', () => {
+  it('declares cooperative timeoutMs on every tool (longer for batch and upload)', () => {
     const { ctx, bridge, registered } = makeHarness()
     registerBrowserTools(ctx, bridge, { toolTimeoutMs: 5_000, snapshotMaxChars: 12_000, maxInteractiveItems: 60 })
-    for (const { definition } of registered) {
-      expect(definition.timeoutMs).toBe(5_000)
+    const multipliers: Record<string, number> = { browser_batch: 3, browser_upload: 2 }
+    for (const { name, definition } of registered) {
+      expect(definition.timeoutMs, name).toBe(5_000 * (multipliers[name] ?? 1))
     }
   })
 
@@ -235,5 +239,74 @@ describe('registerBrowserTools', () => {
     const tool = registered.find((r) => r.name === 'browser_click')!
     const output = tool.definition.output as { render: (args: unknown, value: unknown) => unknown }
     expect(output.render({}, { text: 'hello' })).toEqual([{ type: 'text', text: 'hello' }])
+  })
+
+  it('forwards batch, drag, dialog, console, network, and evaluate args', async () => {
+    const { ctx, bridge, requestTool, registered } = makeHarness()
+    registerBrowserTools(ctx, bridge, { toolTimeoutMs: 1_000, snapshotMaxChars: 12_000, maxInteractiveItems: 60 })
+    const byName = new Map(registered.map((r) => [r.name, r.definition]))
+    const exec = { signal: new AbortController().signal, agent: { id: 'session-x' } }
+    const run = async (name: string, args: unknown): Promise<unknown> =>
+      (byName.get(name)!.execute as (a: unknown, e: typeof exec) => Promise<unknown>)(args, exec)
+
+    const steps = [{ tool: 'browser_type', args: { index: 1, text: 'q' } }, { tool: 'browser_press', args: { key: 'Enter' } }]
+    await run('browser_batch', { steps })
+    expect(requestTool).toHaveBeenLastCalledWith('browser_batch', { steps }, exec.signal, 3_000, 'session-x')
+
+    await run('browser_drag', { index: 2, toIndex: 5 })
+    expect(requestTool).toHaveBeenLastCalledWith('browser_drag', { index: 2, toIndex: 5 }, exec.signal, 1_000, 'session-x')
+    await run('browser_drag', { x: 1, y: 2, toX: 30, toY: 40 })
+    expect(requestTool).toHaveBeenLastCalledWith('browser_drag', { x: 1, y: 2, toX: 30, toY: 40 }, exec.signal, 1_000, 'session-x')
+
+    await run('browser_handle_dialog', { action: 'accept', text: 'yes', once: false })
+    expect(requestTool).toHaveBeenLastCalledWith('browser_handle_dialog', { action: 'accept', text: 'yes', once: false }, exec.signal, 1_000, 'session-x')
+    await run('browser_console', { level: 'error', clear: true })
+    expect(requestTool).toHaveBeenLastCalledWith('browser_console', { level: 'error', clear: true }, exec.signal, 1_000, 'session-x')
+    await run('browser_network', { urlContains: '/api/' })
+    expect(requestTool).toHaveBeenLastCalledWith('browser_network', { urlContains: '/api/' }, exec.signal, 1_000, 'session-x')
+    await run('browser_evaluate', { expression: 'document.title' })
+    expect(requestTool).toHaveBeenLastCalledWith('browser_evaluate', { expression: 'document.title' }, exec.signal, 1_000, 'session-x')
+    await run('browser_get_text', { format: 'plain' })
+    expect(requestTool).toHaveBeenLastCalledWith('browser_get_text', { format: 'plain' }, exec.signal, 1_000, 'session-x')
+  })
+
+  it('reads upload files only from inside the session working directory', async () => {
+    const { mkdtemp, writeFile, mkdir, rm } = await import('node:fs/promises')
+    const { tmpdir } = await import('node:os')
+    const { join } = await import('node:path')
+    const root = await mkdtemp(join(tmpdir(), 'dsh-upload-'))
+    const outside = await mkdtemp(join(tmpdir(), 'dsh-outside-'))
+    try {
+      await mkdir(join(root, 'docs'))
+      await writeFile(join(root, 'docs', 'note.txt'), 'hello')
+      await writeFile(join(root, 'photo.png'), Buffer.from([0x89, 0x50]))
+      await writeFile(join(outside, 'secret.txt'), 'nope')
+
+      const { ctx, bridge, requestTool, registered } = makeHarness()
+      registerBrowserTools(ctx, bridge, { toolTimeoutMs: 1_000, snapshotMaxChars: 12_000, maxInteractiveItems: 60 })
+      const upload = registered.find((r) => r.name === 'browser_upload')!.definition
+      const exec = { signal: new AbortController().signal, agent: { id: 's', session: { header: { cwd: root } } } }
+      const run = (args: unknown): Promise<unknown> => (upload.execute as (a: unknown, e: typeof exec) => Promise<unknown>)(args, exec)
+
+      await run({ index: 4, paths: ['docs/note.txt', join(root, 'photo.png')] })
+      expect(requestTool).toHaveBeenLastCalledWith('browser_upload', {
+        index: 4,
+        files: [
+          { name: 'note.txt', mediaType: 'text/plain', data: Buffer.from('hello').toString('base64') },
+          { name: 'photo.png', mediaType: 'image/png', data: Buffer.from([0x89, 0x50]).toString('base64') },
+        ],
+      }, exec.signal, 2_000, 's')
+
+      await expect(run({ index: 4, paths: ['../' + outside.split('/').pop() + '/secret.txt'] })).rejects.toThrow(/outside the session working directory/)
+      await expect(run({ index: 4, paths: [join(outside, 'secret.txt')] })).rejects.toThrow(/outside the session working directory/)
+      await expect(run({ index: 4, paths: ['docs'] })).rejects.toThrow(/not a regular file/)
+      await expect(run({ index: 4, paths: [] })).rejects.toThrow(/at least one file/)
+      const noCwd = { signal: exec.signal, agent: { id: 's' } }
+      await expect((upload.execute as (a: unknown, e: typeof noCwd) => Promise<unknown>)({ index: 4, paths: ['docs/note.txt'] }, noCwd))
+        .rejects.toThrow(/session working directory/)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+      await rm(outside, { recursive: true, force: true })
+    }
   })
 })

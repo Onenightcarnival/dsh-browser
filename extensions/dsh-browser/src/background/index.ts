@@ -41,6 +41,9 @@ import {
 import type { ServerFrame } from '@onenightcarnival/dsh-bridge-browser/src/protocol.ts'
 import { BRIDGE_CONFIG_PATH, BRIDGE_PATH } from '@onenightcarnival/dsh-bridge-browser/src/protocol.ts'
 import { BridgeClient, type BridgeState } from './bridge.ts'
+import { forgetPageHooks } from './page-hooks.ts'
+import { detachAllDebuggers, detachDebugger } from './debugger-input.ts'
+import { runBatch } from './batch.ts'
 import { createRpc } from './rpc.ts'
 import {
   dispatchOpenTab,
@@ -94,6 +97,10 @@ export interface Settings {
   approvalNotifications: boolean
   /** Restore the current tab and page path's conversation when the panel reopens. */
   autoResumeSession: boolean
+  /** Let browser_screenshot capture the controlled tab (images cannot mask passwords). */
+  allowScreenshots: boolean
+  /** Drive coordinate clicks and key presses through chrome.debugger as trusted input. */
+  trustedInput: boolean
 }
 
 const SETTINGS_DEFAULTS: Settings = {
@@ -105,6 +112,8 @@ const SETTINGS_DEFAULTS: Settings = {
   trustedActionOrigins: [],
   approvalNotifications: true,
   autoResumeSession: true,
+  allowScreenshots: true,
+  trustedInput: false,
 }
 
 /**
@@ -266,7 +275,9 @@ async function persistSettings(next: Partial<Settings>): Promise<void> {
   const accessRevision = changesUnrestrictedAccess ? ++unrestrictedAccessRevision : unrestrictedAccessRevision
   const updated = normalizeSettings({ ...settings, ...next })
   const revokesUnrestrictedAccess = settings.unrestrictedBrowserAccess && !updated.unrestrictedBrowserAccess
+  const revokesTrustedInput = settings.trustedInput && !updated.trustedInput
   settings = updated
+  if (revokesTrustedInput) void detachAllDebuggers().catch(() => {})
   if (!updated.unrestrictedBrowserAccess) unrestrictedAccessActive = false
   syncSelectionWatch()
   let accessTransition: Promise<void> | undefined
@@ -313,6 +324,8 @@ function normalizeSettings(candidate: Settings): Settings {
     trustedActionOrigins: trusted,
     approvalNotifications: candidate.approvalNotifications !== false,
     autoResumeSession: candidate.autoResumeSession !== false,
+    allowScreenshots: candidate.allowScreenshots !== false,
+    trustedInput: candidate.trustedInput === true,
   }
 }
 
@@ -970,7 +983,7 @@ async function refreshFollowedPage(sessionId: string, tabId: number): Promise<vo
       controller.signal,
       target,
       () => target.id !== undefined && tabAffinity.allowsTarget(target.id, sessionId),
-      { unrestrictedAccess },
+      { unrestrictedAccess, allowScreenshots: settings.allowScreenshots, trustedInput: settings.trustedInput },
     )
     if (!answer.ok || controller.signal.aborted || !tabAffinity.allowsTarget(tabId, sessionId)) return
     if (typeof answer.result !== 'object' || answer.result === null) return
@@ -1083,6 +1096,7 @@ async function pushBudgetToControlledTab(negotiated: BridgeCaps): Promise<void> 
   }
 }
 
+
 /** Route one tool.call frame to the user-approved controlled tab. */
 function routeToolCall(call: ToolCall): void {
   if (bridge === null) return
@@ -1114,7 +1128,7 @@ function routeToolCall(call: ToolCall): void {
     ? undefined
     : { maxItems: caps.maxInteractiveItems, maxChars: caps.snapshotMaxChars }
   const sharePageContent = unrestrictedAccess ? 'auto' : settings.sharePageContent
-  const managementDispatch = async (): Promise<ToolAnswer> => {
+  const managementDispatch = async (one: ToolCall): Promise<ToolAnswer> => {
     await affinityReady
     const affinity = tabAffinity.snapshot()
     let windowId = affinity.active?.windowId ?? affinity.controlled?.windowId
@@ -1123,55 +1137,57 @@ function routeToolCall(call: ToolCall): void {
         windowId = (await chrome.windows.getLastFocused()).id
       } catch { /* approvals can still report unavailable without a focused window */ }
     }
-    const controlledTabId = call.sessionId === undefined
+    const controlledTabId = one.sessionId === undefined
       ? affinity.controlled?.tabId
-      : tabAffinity.getSessionTab(call.sessionId)?.tabId
+      : tabAffinity.getSessionTab(one.sessionId)?.tabId
     return dispatchToolCall(
-      call,
+      one,
       sharePageContent,
       budget,
-      (prompt) => authorizeToolCall(prompt, controller.signal, windowId ?? 0, call.sessionId, unrestrictedAccess),
+      (prompt) => authorizeToolCall(prompt, controller.signal, windowId ?? 0, one.sessionId, unrestrictedAccess),
       controller.signal,
       undefined,
       undefined,
       {
         unrestrictedAccess,
         ...(controlledTabId === undefined ? {} : { controlledTabId }),
-        followTab: (tab) => followModelSelectedTab(tab, call.sessionId),
+        followTab: (tab) => followModelSelectedTab(tab, one.sessionId),
         commitAction,
         rollbackActionCommit,
+        allowScreenshots: settings.allowScreenshots,
+        trustedInput: settings.trustedInput,
       },
     )
   }
-  void (isTabManagementTool(call.name)
-    ? managementDispatch()
-    : call.name === 'browser_open_tab'
-    ? resolveOpenTabWindow(call.sessionId).then((target) => 'ok' in target
+  const runOne = (one: ToolCall): Promise<ToolAnswer> => isTabManagementTool(one.name)
+    ? managementDispatch(one)
+    : one.name === 'browser_open_tab'
+    ? resolveOpenTabWindow(one.sessionId).then((target) => 'ok' in target
       ? target
       : dispatchOpenTab(
-          call,
+          one,
           target.windowId,
           sharePageContent,
           budget,
-          (prompt) => authorizeToolCall(prompt, controller.signal, target.windowId, call.sessionId, unrestrictedAccess),
+          (prompt) => authorizeToolCall(prompt, controller.signal, target.windowId, one.sessionId, unrestrictedAccess),
           controller.signal,
-          (tab) => bindOpenedTab(tab, call.sessionId, { active: call.args.active !== false }),
-          (tabId) => tabAffinity.allowsTarget(tabId, call.sessionId),
+          (tab) => bindOpenedTab(tab, one.sessionId, { active: one.args.active !== false }),
+          (tabId) => tabAffinity.allowsTarget(tabId, one.sessionId),
           commitAction,
         ))
-    : resolveToolTab(call.sessionId).then((target) => 'ok' in target
+    : resolveToolTab(one.sessionId).then((target) => 'ok' in target
       ? target
       : dispatchToolCall(
-          call,
+          one,
           sharePageContent,
           budget,
-          (prompt) => authorizeToolCall(prompt, controller.signal, target.windowId, call.sessionId, unrestrictedAccess),
+          (prompt) => authorizeToolCall(prompt, controller.signal, target.windowId, one.sessionId, unrestrictedAccess),
           controller.signal,
           target,
-          () => target.id !== undefined && tabAffinity.allowsTarget(target.id, call.sessionId),
-          { unrestrictedAccess, commitAction, rollbackActionCommit },
+          () => target.id !== undefined && tabAffinity.allowsTarget(target.id, one.sessionId),
+          { unrestrictedAccess, commitAction, rollbackActionCommit, allowScreenshots: settings.allowScreenshots, trustedInput: settings.trustedInput },
         ))
-  ).then(
+  void (call.name === 'browser_batch' ? runBatch(call, runOne, controller.signal) : runOne(call)).then(
     async (answer) => {
       if (activeToolCalls.get(call.id) !== activeCall) return
       // A committed browser_open_tab already rebound affinity; prefer that
@@ -1188,7 +1204,7 @@ function routeToolCall(call: ToolCall): void {
         return
       }
       if (answer.ok) {
-        if (isNavigationCandidateTool(call.name)) await checkpointSessionPage(call.sessionId)
+        if (isNavigationCandidateTool(call.name) || call.name === 'browser_batch') await checkpointSessionPage(call.sessionId)
         if (activeToolCalls.get(call.id) !== activeCall) return
         const socket = bridge
         if (socket === null) return
@@ -1704,6 +1720,8 @@ chrome.tabs.onReplaced.addListener((addedTabId, removedTabId) => {
 })
 
 chrome.tabs.onRemoved.addListener((tabId) => {
+  forgetPageHooks(tabId)
+  void detachDebugger(tabId)
   broadcastSelections(selections.clearTab(tabId))
   void pageSessionContexts.ready.then(() => {
     pageSessionContexts.removeTab(tabId)
