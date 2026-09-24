@@ -8,7 +8,7 @@
  * @module
  */
 
-import { DEFAULT_SNAPSHOT_MAX_CHARS } from '@onenightcarnival/dsh-bridge-browser/src/protocol.ts'
+import { DEFAULT_MAX_INTERACTIVE_ITEMS, DEFAULT_SNAPSHOT_MAX_CHARS } from '@onenightcarnival/dsh-bridge-browser/src/protocol.ts'
 import type { ToolError } from '@onenightcarnival/dsh-bridge-browser/src/protocol.ts'
 import {
   allocateFrameBudgets,
@@ -20,6 +20,7 @@ import {
 import { wrapUntrustedContent } from '../security/untrusted.ts'
 import { approvalPromptForCall, originFromUrl } from './authorization.ts'
 import { waitForNextDocumentReady } from './navigation.ts'
+import { annotateScreenshot, parseAnnotationPayload } from './screenshot.ts'
 import type { ApprovalAuthorization, ApprovalPrompt } from '../security/approval.ts'
 import { getUiLocale } from '../i18n.ts'
 
@@ -54,6 +55,9 @@ const ACTION_DELTA_TOOLS = new Set([
   'browser_press',
   'browser_scroll',
   'browser_wait',
+  'browser_hover',
+  'browser_form_input',
+  'browser_wait_for',
 ])
 const ACTION_DELTA_GUIDANCE = 'The page settled and its current changes are included below. Continue from this state; take another snapshot only when broader page context is needed.'
 const NAVIGATION_CANDIDATE_TOOLS = new Set([
@@ -75,6 +79,8 @@ const STATE_CHANGING_PAGE_TOOLS = new Set([
   'browser_click',
   'browser_type',
   'browser_press',
+  'browser_hover',
+  'browser_form_input',
   'browser_scroll',
   'browser_navigate',
   'browser_back',
@@ -252,6 +258,70 @@ async function dispatchTabNativeTool(
   if (isCancelled(call, signal)) return cancelled()
   if (targetStillAllowed?.() === false) return targetChanged()
   return { ok: true, result: { text, navigationPending: true } }
+}
+
+/**
+ * Capture the controlled tab's viewport. The capture API photographs the
+ * window, so the controlled tab must be its active tab; otherwise the model
+ * is told how to bring it forward instead of receiving a picture of some
+ * other page. With a main-frame content script available, the inventoried
+ * elements are labeled with their indices.
+ */
+async function screenshotTab(
+  tab: chrome.tabs.Tab,
+  mainFrame: TabFrame | undefined,
+  call: ToolCall,
+  signal?: AbortSignal,
+  budget?: ContentBudget,
+): Promise<ToolAnswer> {
+  if (tab.id === undefined) return unavailable('The controlled tab no longer exists.')
+  if (!tab.active) {
+    return {
+      ok: false,
+      error: {
+        code: 'action-failed',
+        message: 'The controlled tab is not the visible tab of its window, so it cannot be captured. Call browser_follow_tab on it (which activates it) or ask the user to switch to it, then retry.',
+      },
+    }
+  }
+  const annotate = call.args.annotate !== false
+  let annotation: ReturnType<typeof parseAnnotationPayload> = null
+  if (annotate && mainFrame !== undefined) {
+    try {
+      const response = await sendAction(tab.id, { ...call, name: 'browser_element_rects', args: {} }, mainFrame, budget)
+      const text = isToolAnswer(response) ? answerText(response) : undefined
+      if (text !== undefined) annotation = parseAnnotationPayload(text)
+    } catch {
+      // The picture is still useful without labels.
+    }
+  }
+  if (isCancelled(call, signal)) return cancelled()
+  let dataUrl: string
+  try {
+    dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'png' })
+  } catch (error: unknown) {
+    const detail = error instanceof Error ? error.message : String(error)
+    return unavailable(`The browser refused to capture this tab: ${detail}`)
+  }
+  if (isCancelled(call, signal)) return cancelled()
+  try {
+    const viewport = annotation?.viewport ?? { width: tab.width ?? 0, height: tab.height ?? 0, dpr: 1 }
+    const { image, labels } = await annotateScreenshot(dataUrl, annotation?.rects ?? [], viewport)
+    const title = (annotation?.title ?? tab.title ?? '').replace(/\s+/g, ' ').slice(0, 120)
+    const url = annotation?.url ?? tab.url ?? ''
+    const lines = [
+      `Screenshot of "${title}" (${url}).`,
+      `Image ${image.width}×${image.height}px covers the viewport of ${viewport.width}×${viewport.height} CSS px`
+      + (viewport.width > 0 ? `; multiply image coordinates by ${(viewport.width / image.width).toFixed(3)} to get viewport x/y for browser_click.` : '.'),
+      labels > 0
+        ? `${labels} interactive elements are labeled with their browser_snapshot indices; use those indices with browser_click / browser_type / browser_form_input.`
+        : 'No element labels were drawn' + (annotate ? ' (take a browser_snapshot first to inventory elements, or the page exposes no interactive elements in view).' : '.'),
+    ]
+    return { ok: true, result: { text: lines.join('\n'), image: { mediaType: image.mediaType, data: image.data } } }
+  } catch (error: unknown) {
+    const detail = error instanceof Error ? error.message : String(error)
+    return unavailable(`The screenshot could not be encoded: ${detail}`)
+  }
 }
 
 function cancelled(): ToolAnswer {
@@ -439,6 +509,12 @@ async function dispatchOnce(
   if (isCancelled(call, signal)) return cancelled()
   if (targetStillAllowed?.() === false) return targetChanged()
   if (call.name === 'browser_snapshot') return snapshotAllFrames(tabId, frames, call, budget)
+  if (call.name === 'browser_screenshot') {
+    const tab = await chrome.tabs.get(tabId)
+    if (isCancelled(call, signal)) return cancelled()
+    if (targetStillAllowed?.() === false) return targetChanged()
+    return screenshotTab(tab, frames.find((frame) => frame.frameId === 0), call, signal, budget)
+  }
 
   const frameId = requestedFrame(call.args)
   if (frameId < 0) return { ok: false, error: { code: 'action-failed', message: 'frame must be a non-negative integer.' } }
@@ -500,7 +576,7 @@ async function dispatchOnce(
   } else {
     navigationWait?.cancel()
   }
-  if (call.name === 'browser_get_text') {
+  if (call.name === 'browser_get_text' || call.name === 'browser_find') {
     return { ok: true, result: { text: wrapUntrustedContent(text, budget.maxChars) } }
   }
   const pageContent = requestPageDelta ? answerPageContent(response) : undefined
@@ -682,14 +758,15 @@ export async function dispatchToolCall(
     return unavailable('browser_open_tab must be dispatched through the background open-tab path.')
   }
   if (isCancelled(call, signal)) return cancelled()
-  const effectiveBudget = budget ?? { maxItems: 60, maxChars: DEFAULT_SNAPSHOT_MAX_CHARS }
+  const effectiveBudget = budget ?? { maxItems: DEFAULT_MAX_INTERACTIVE_ITEMS, maxChars: DEFAULT_SNAPSHOT_MAX_CHARS }
   if (isTabManagementTool(call.name)) {
     return dispatchTabManagementTool(call, effectiveBudget, authorize, signal, tabManagement)
   }
   // Privacy boundary: with sharing off, no page content may leave the page.
   if (!tabManagement.unrestrictedAccess
     && sharePageContent === 'off'
-    && (call.name === 'browser_snapshot' || call.name === 'browser_get_text')) {
+    && (call.name === 'browser_snapshot' || call.name === 'browser_get_text' || call.name === 'browser_screenshot'
+      || call.name === 'browser_find')) {
     return { ok: false, error: { code: 'action-failed', message: 'Page content sharing is disabled in Settings > Page content sharing.' } }
   }
   const tab = targetTab ?? (await chrome.tabs.query({ active: true, lastFocusedWindow: true }))[0]
@@ -703,6 +780,9 @@ export async function dispatchToolCall(
   if (targetStillAllowed?.() === false) return targetChanged()
   const frameError = validateFrameTarget(call, frames)
   if (frameError !== undefined) return frameError
+  if (!isInjectablePage(tab.url) && call.name === 'browser_screenshot') {
+    return screenshotTab(await chrome.tabs.get(tab.id), undefined, call, signal)
+  }
   if (!isInjectablePage(tab.url) && !TAB_NATIVE_TOOLS.has(call.name)) {
     return unavailable('The current page DOM is protected by the browser. Only snapshot metadata, navigate, back, forward, and reload are available on this page.')
   }
@@ -960,7 +1040,7 @@ export async function dispatchOpenTab(
       tabId,
       call,
       status,
-      budget ?? { maxItems: 60, maxChars: DEFAULT_SNAPSHOT_MAX_CHARS },
+      budget ?? { maxItems: DEFAULT_MAX_INTERACTIVE_ITEMS, maxChars: DEFAULT_SNAPSHOT_MAX_CHARS },
       () => targetStillAllowed(tabId),
     )
     if (snapshot !== undefined) return snapshot

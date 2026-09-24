@@ -2,7 +2,7 @@
 
 English | [中文](README.zh.md)
 
-The **browser-operation bridge** for dsh: mounts a token-authenticated WebSocket carrier (`/ext/bridge`) that the Chrome extension connects to, projects its calls onto dsh 0.1.5 Typert Remotes, follows Session and Remote Event streams per connection, and registers the text-only `browser_*` tool set that reads and operates the user's active tab through the extension — click elements, fill forms, scroll, and navigate in the real browser, login state preserved. The side panel is the conversation entry; the tools are the product.
+The **browser-operation bridge** for dsh: mounts a token-authenticated WebSocket carrier (`/ext/bridge`) that the Chrome extension connects to, projects its calls onto dsh 0.1.5 Typert Remotes, follows Session and Remote Event streams per connection, and registers the `browser_*` tool set (structured text first; `browser_screenshot` returns an annotated image) that reads and operates the user's active tab through the extension — click elements, fill forms, scroll, and navigate in the real browser, login state preserved. The side panel is the conversation entry; the tools are the product.
 
 **Text-only browser tools, multimodal chat passthrough**: page snapshots stay structured text (title, main content, numbered interactive inventory, and masked form fields), and every browser action uses stable inventory numbers. The generic RPC carrier also passes dsh 0.1.5 image prompts and durable attachment reads; deferred new sessions expose image limits only when the host actually mounts the attachment service.
 
@@ -12,8 +12,8 @@ The **browser-operation bridge** for dsh: mounts a token-authenticated WebSocket
 |---|---|---|---|
 | `token` | `string` | generated | Fixed bearer token. When absent, a token is generated on first boot, persisted at `~/.dsh/ext-bridge-token` (chmod 0600), and printed in the boot log. |
 | `toolTimeoutMs` | `number` | 90000 | Per-tool-call budget, leaving time for the extension's 60-second approval window. |
-| `snapshotMaxChars` | `number` | 32000 | Upper bound on one rendered snapshot's characters, minimum 500 (also negotiated to the extension via `hello.ok` caps). |
-| `maxInteractiveItems` | `number` | 60 | Upper bound on interactive inventory items per snapshot. |
+| `snapshotMaxChars` | `number` | 200000 | Upper bound on one rendered snapshot's characters, minimum 500 (also negotiated to the extension via `hello.ok` caps). |
+| `maxInteractiveItems` | `number` | 400 | Upper bound on interactive inventory items per snapshot. |
 | `sessionWorkspacePath` | `string` | `~/.dsh/browser-sessions` | Dedicated Host Workspace for extension-created sessions. The plugin creates and idempotently registers the directory on the first implicit `session.create`; the session cwd becomes this path, so the GUI shows a `browser-sessions` workspace group. Set `""` to keep sessions Ungrouped. |
 | `deferSessionCreate` | `boolean` | `true` | Sessions materialize only on the first message: `session.create` answers with a provisional id (nothing persisted), history reads empty, and the first `session.prompt` creates the real session (same id, original payload). Opening the panel without chatting leaves zero trace in the session store/GUI. |
 | `discoveryPort` | `number` | 43189 | Discovery beacon: a loopback listener that answers only `/ext/bridge-config` with this instance's bridge URL, for hosts on a random web port (DeepSeek Harness Desktop). Falls back through the next three ports when taken; `0` disables. |

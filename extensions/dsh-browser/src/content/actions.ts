@@ -10,10 +10,11 @@
  * @module
  */
 
-import { pageText, truncate } from './extract.ts'
+import { accessibleName, deepQuerySelector, deepQuerySelectorAll, pageText, truncate, viewportRect } from './extract.ts'
 import type { ElementIds } from './ids.ts'
 import type { SnapshotBudget } from './snapshot.ts'
 import { buildSnapshot, renderSnapshot } from './snapshot.ts'
+import { isSensitiveField } from './privacy.ts'
 
 /** A settled action result. */
 export interface ActionResult {
@@ -190,6 +191,16 @@ export async function runAction(action: string, args: Record<string, unknown>, c
       return getTextAction(args)
     case 'browser_wait':
       return waitAction(args, ctx)
+    case 'browser_find':
+      return findAction(args, ctx)
+    case 'browser_hover':
+      return hoverAction(args, ctx)
+    case 'browser_form_input':
+      return formInputAction(args, ctx)
+    case 'browser_wait_for':
+      return waitForAction(args, ctx)
+    case 'browser_element_rects':
+      return elementRectsAction(ctx)
     default:
       throw new ActionError('bad-args', `Unknown action: ${action}`)
   }
@@ -223,9 +234,59 @@ function withPageDelta(text: string, ctx: ActionContext): ActionResult {
   }
 }
 
-async function clickAction(args: Record<string, unknown>, ctx: ActionContext): Promise<ActionResult> {
+/**
+ * The deepest element at viewport coordinates, descending into open shadow
+ * roots so a click lands on the component's real control, not its host.
+ */
+function elementAtPoint(x: number, y: number): Element | null {
+  let el = document.elementFromPoint(x, y)
+  while (el?.shadowRoot !== null && el?.shadowRoot !== undefined) {
+    const inner = el.shadowRoot.elementFromPoint(x, y)
+    if (inner === null || inner === el) break
+    el = inner
+  }
+  return el
+}
+
+/** Resolve an action target from `index`, or from `x`/`y` viewport coordinates. */
+function targetElement(args: Record<string, unknown>, ctx: ActionContext): { el: Element; label: string; index: number } {
+  if (typeof args.x === 'number' && typeof args.y === 'number') {
+    const x = Math.round(args.x)
+    const y = Math.round(args.y)
+    if (x < 0 || y < 0 || x > window.innerWidth || y > window.innerHeight) {
+      throw new ActionError('bad-args', `(${x}, ${y}) is outside the viewport (${window.innerWidth}×${window.innerHeight}).`)
+    }
+    const el = elementAtPoint(x, y)
+    if (el === null) throw new ActionError('action-failed', `No element at (${x}, ${y}).`)
+    const index = typeof ctx.ids.indexOf === 'function' ? ctx.ids.indexOf(el) : undefined
+    return { el, label: index === undefined ? `element at (${x}, ${y})` : `[${index}] at (${x}, ${y})`, index: index ?? -1 }
+  }
   const index = numberArg(args, 'index')
-  const el = elementOrThrow(ctx.ids, index)
+  return { el: elementOrThrow(ctx.ids, index), label: `[${index}]`, index }
+}
+
+async function clickAction(args: Record<string, unknown>, ctx: ActionContext): Promise<ActionResult> {
+  const { el, label, index } = targetElement(args, ctx)
+  const count = args.count === 2 ? 2 : 1
+  if (count === 2) {
+    el.scrollIntoView({ block: 'center', behavior: 'instant' })
+    const init = { bubbles: true, cancelable: true, composed: true, detail: 2 }
+    el.dispatchEvent(new MouseEvent('mousedown', init))
+    el.dispatchEvent(new MouseEvent('mouseup', init))
+    el.dispatchEvent(new MouseEvent('click', init))
+    el.dispatchEvent(new MouseEvent('dblclick', init))
+    await waitForPageSettled(ACTION_SETTLE)
+    return withPageDelta(`Double-clicked ${label}.`, ctx)
+  }
+  if (args.button === 'right') {
+    el.scrollIntoView({ block: 'center', behavior: 'instant' })
+    const init = { bubbles: true, cancelable: true, composed: true, button: 2 }
+    el.dispatchEvent(new MouseEvent('mousedown', init))
+    el.dispatchEvent(new MouseEvent('mouseup', init))
+    el.dispatchEvent(new MouseEvent('contextmenu', init))
+    await waitForPageSettled(ACTION_SETTLE)
+    return withPageDelta(`Right-clicked ${label}.`, ctx)
+  }
   el.scrollIntoView({ block: 'center', behavior: 'instant' })
   if (el instanceof HTMLAnchorElement) {
     const target = el.target.trim().toLowerCase()
@@ -283,11 +344,11 @@ async function clickAction(args: Record<string, unknown>, ctx: ActionContext): P
     return { text: `Clicked link [${index}]. The link may open outside the controlled frame.` }
   }
   if (el instanceof HTMLButtonElement && el.disabled) {
-    throw new ActionError('action-failed', `Button [${index}] is disabled.`)
+    throw new ActionError('action-failed', `Button ${label} is disabled.`)
   }
   ;(el as HTMLElement).click()
   await waitForPageSettled(ACTION_SETTLE)
-  return withPageDelta(`Clicked [${index}].`, ctx)
+  return withPageDelta(`Clicked ${label}.`, ctx)
 }
 
 /**
@@ -380,20 +441,56 @@ async function typeAction(args: Record<string, unknown>, ctx: ActionContext): Pr
   return withPageDelta(`Entered ${text.length} characters into [${index}].`, ctx)
 }
 
+/** Parse "Ctrl+Shift+ArrowDown" into a key plus modifier flags. */
+export function parseKeyCombo(combo: string): { key: string; ctrlKey: boolean; shiftKey: boolean; altKey: boolean; metaKey: boolean } {
+  const flags = { ctrlKey: false, shiftKey: false, altKey: false, metaKey: false }
+  if (combo.trim() === '+') return { key: '+', ...flags }
+  const parts = combo.split('+').map((part) => part.trim()).filter((part) => part !== '')
+  let key = ''
+  for (const part of parts) {
+    const lower = part.toLowerCase()
+    if (lower === 'ctrl' || lower === 'control') flags.ctrlKey = true
+    else if (lower === 'shift') flags.shiftKey = true
+    else if (lower === 'alt' || lower === 'option') flags.altKey = true
+    else if (lower === 'meta' || lower === 'cmd' || lower === 'command' || lower === 'win') flags.metaKey = true
+    else key = part
+  }
+  if (key === '' && parts.length === 1) key = parts[0] as string
+  return { key, ...flags }
+}
+
 async function pressAction(args: Record<string, unknown>, ctx: ActionContext): Promise<ActionResult> {
-  const key = typeof args.key === 'string' && args.key !== '' ? args.key : ''
-  if (key === '') throw new ActionError('bad-args', 'key must not be empty.')
+  const combo = typeof args.key === 'string' && args.key !== '' ? args.key : ''
+  if (combo === '') throw new ActionError('bad-args', 'key must not be empty.')
+  const { key, ...modifiers } = parseKeyCombo(combo)
+  if (key === '') throw new ActionError('bad-args', `"${combo}" names modifiers only; add the key to press.`)
   const target = document.activeElement instanceof HTMLElement ? document.activeElement : document.body
-  target.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }))
-  target.dispatchEvent(new KeyboardEvent('keyup', { key, bubbles: true, cancelable: true }))
-  if (key === 'Enter' && target instanceof HTMLInputElement && target.form !== null) {
+  const init = { key, bubbles: true, cancelable: true, composed: true, ...modifiers }
+  const proceed = target.dispatchEvent(new KeyboardEvent('keydown', init))
+  target.dispatchEvent(new KeyboardEvent('keyup', init))
+  if (proceed && key === 'Enter' && target instanceof HTMLInputElement && target.form !== null) {
     target.form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
   }
+  if (proceed && key === 'Tab' && !modifiers.ctrlKey && !modifiers.altKey && !modifiers.metaKey) {
+    // Synthetic Tab never moves focus; emulate the browser's next-field walk
+    // over the visible interactive inventory in DOM order.
+    const focusables = deepQuerySelectorAll(document, 'a[href], button, input:not([type="hidden"]), select, textarea, [tabindex]:not([tabindex="-1"]), [contenteditable="true"]')
+      .filter((el) => el instanceof HTMLElement && !(el as HTMLButtonElement).disabled && el.getBoundingClientRect().width > 0)
+    const at = focusables.indexOf(target)
+    const next = focusables[(at + (modifiers.shiftKey ? -1 : 1) + focusables.length) % Math.max(1, focusables.length)]
+    if (next instanceof HTMLElement) next.focus()
+  }
   await waitForPageSettled(ACTION_SETTLE)
-  return withPageDelta(`Sent key "${key}".`, ctx)
+  return withPageDelta(`Sent key "${combo}".`, ctx)
 }
 
 async function scrollAction(args: Record<string, unknown>, ctx: ActionContext): Promise<ActionResult> {
+  if (typeof args.index === 'number') {
+    const el = elementOrThrow(ctx.ids, numberArg(args, 'index'))
+    el.scrollIntoView({ block: 'center', behavior: 'instant' })
+    await waitForPageSettled(SCROLL_SETTLE)
+    return withPageDelta(`Scrolled [${String(args.index)}] into view.`, ctx)
+  }
   const direction = typeof args.direction === 'string' ? args.direction : ''
   const amount = typeof args.amount === 'number' ? args.amount : Math.floor(window.innerHeight * 0.8)
   switch (direction) {
@@ -460,7 +557,7 @@ function reloadAction(): ActionResult {
 
 async function getTextAction(args: Record<string, unknown>): Promise<ActionResult> {
   const selector = typeof args.selector === 'string' && args.selector !== '' ? args.selector : undefined
-  const source = selector !== undefined ? document.querySelector(selector) : null
+  const source = selector !== undefined ? deepQuerySelector(document, selector) : null
   const text = source !== null ? pageText(source) : selector !== undefined ? `No element matched selector: ${selector}` : pageText()
   const truncated = truncate(text, 8_000)
   return { text: truncated.text + (truncated.truncated > 0 ? `\n(Truncated ${truncated.truncated} characters.)` : '') }
@@ -471,6 +568,259 @@ async function waitAction(args: Record<string, unknown>, ctx: ActionContext): Pr
   await waitForPageSettled(EXPLICIT_WAIT_SETTLE)
   if (ms > 0) await sleep(ms)
   return withPageDelta(`The page is stable${ms > 0 ? ` after an additional ${ms}ms wait` : ''}.`, ctx)
+}
+
+const MAX_FIND_RESULTS = 50
+
+/**
+ * Locate elements by visible text, accessible name, role, or CSS selector.
+ * Results are inventory-numbered so click/type/form_input can use them
+ * directly; elements not yet in the inventory (non-interactive text hits) are
+ * assigned ids on the spot.
+ */
+function findAction(args: Record<string, unknown>, ctx: ActionContext): ActionResult {
+  const text = typeof args.text === 'string' ? args.text.trim().toLowerCase() : ''
+  const role = typeof args.role === 'string' ? args.role.trim().toLowerCase() : ''
+  const selector = typeof args.selector === 'string' ? args.selector.trim() : ''
+  if (text === '' && role === '' && selector === '') {
+    throw new ActionError('bad-args', 'Provide at least one of text, role, or selector.')
+  }
+  let candidates: Element[]
+  try {
+    candidates = selector !== '' ? deepQuerySelectorAll(document, selector) : deepQuerySelectorAll(document, '*')
+  } catch {
+    throw new ActionError('bad-args', `"${selector}" is not a valid CSS selector.`)
+  }
+  const matches: Element[] = []
+  for (const el of candidates) {
+    if (matches.length >= MAX_FIND_RESULTS * 4) break
+    if (!(el instanceof HTMLElement) || el.getBoundingClientRect().width === 0) continue
+    if (role !== '' && roleLabel(el) !== role) continue
+    if (text !== '') {
+      const own = ownText(el).toLowerCase()
+      const name = accessibleName(el).toLowerCase()
+      const value = el instanceof HTMLInputElement && !isSensitiveField(el) ? el.value.toLowerCase() : ''
+      const placeholder = el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement ? el.placeholder.toLowerCase() : ''
+      if (!own.includes(text) && !name.includes(text) && !value.includes(text) && !placeholder.includes(text)) continue
+    }
+    matches.push(el)
+  }
+  // Prefer the innermost match: a text hit on a wrapper is also a hit on every
+  // ancestor, and the model wants the control, not the page body.
+  const leafMatches = matches.filter((el) => !matches.some((other) => other !== el && el.contains(other)))
+  const listed = leafMatches.slice(0, MAX_FIND_RESULTS)
+  ctx.ids.ensure(listed)
+  if (listed.length === 0) return { text: 'No elements matched.' }
+  const lines = listed.map((el) => {
+    const index = ctx.ids.indexOf(el)
+    const rect = viewportRect(el)
+    const where = rect === null ? '' : ` at (${rect.x + Math.floor(rect.width / 2)}, ${rect.y + Math.floor(rect.height / 2)})`
+    return `  [${String(index)}] ${roleLabel(el)} "${accessibleName(el)}"${where}`
+  })
+  const more = leafMatches.length > listed.length ? `\n  … ${leafMatches.length - listed.length} more matches omitted` : ''
+  return { text: `${listed.length} match${listed.length === 1 ? '' : 'es'}:\n${lines.join('\n')}${more}` }
+}
+
+/** Text directly inside an element (not its descendants' block text). */
+function ownText(el: Element): string {
+  let text = ''
+  for (const node of el.childNodes) {
+    if (node.nodeType === Node.TEXT_NODE) text += node.textContent ?? ''
+  }
+  const trimmed = text.replace(/\s+/g, ' ').trim()
+  return trimmed !== '' ? trimmed : renderedText(el).replace(/\s+/g, ' ').trim().slice(0, 200)
+}
+
+/** innerText where the engine provides it (browsers), textContent otherwise (jsdom). */
+function renderedText(el: Element | null): string {
+  if (el === null) return ''
+  if (el instanceof HTMLElement && typeof el.innerText === 'string') return el.innerText
+  return el.textContent ?? ''
+}
+
+function roleLabel(el: Element): string {
+  const role = el.getAttribute('role')
+  if (role !== null && role !== '') return role.toLowerCase()
+  if (el instanceof HTMLAnchorElement) return 'link'
+  if (el instanceof HTMLButtonElement) return 'button'
+  if (el instanceof HTMLInputElement) return el.type === 'checkbox' || el.type === 'radio' ? el.type : 'input'
+  if (el instanceof HTMLSelectElement) return 'select'
+  if (el instanceof HTMLTextAreaElement) return 'textarea'
+  if (/^h[1-6]$/i.test(el.tagName)) return 'heading'
+  return el.tagName.toLowerCase()
+}
+
+async function hoverAction(args: Record<string, unknown>, ctx: ActionContext): Promise<ActionResult> {
+  const { el, label } = targetElement(args, ctx)
+  el.scrollIntoView({ block: 'center', behavior: 'instant' })
+  const rect = el.getBoundingClientRect()
+  const init = {
+    bubbles: true,
+    cancelable: true,
+    composed: true,
+    clientX: rect.left + rect.width / 2,
+    clientY: rect.top + rect.height / 2,
+  }
+  const pointer = (type: string, options: MouseEventInit): Event =>
+    typeof PointerEvent === 'function' ? new PointerEvent(type, options) : new MouseEvent(type, options)
+  el.dispatchEvent(pointer('pointerover', init))
+  el.dispatchEvent(pointer('pointerenter', { ...init, bubbles: false }))
+  el.dispatchEvent(new MouseEvent('mouseover', init))
+  el.dispatchEvent(new MouseEvent('mouseenter', { ...init, bubbles: false }))
+  el.dispatchEvent(pointer('pointermove', init))
+  el.dispatchEvent(new MouseEvent('mousemove', init))
+  await waitForPageSettled(ACTION_SETTLE)
+  return withPageDelta(`Hovered ${label}.`, ctx)
+}
+
+/**
+ * Set several fields in one call. Text fields get their value replaced,
+ * selects pick by option label or value, checkboxes/radios take booleans,
+ * contenteditable hosts are replaced through the editing pipeline.
+ */
+async function formInputAction(args: Record<string, unknown>, ctx: ActionContext): Promise<ActionResult> {
+  const fields = Array.isArray(args.fields) ? args.fields : undefined
+  if (fields === undefined || fields.length === 0) throw new ActionError('bad-args', 'fields must be a non-empty array of { index, value }.')
+  const report: string[] = []
+  for (const field of fields) {
+    if (typeof field !== 'object' || field === null) throw new ActionError('bad-args', 'Each field must be an object with index and value.')
+    const { index, value } = field as { index?: unknown; value?: unknown }
+    if (typeof index !== 'number' || !Number.isInteger(index) || index < 0) {
+      throw new ActionError('bad-args', `field index must be a non-negative integer; received ${String(index)}.`)
+    }
+    const el = elementOrThrow(ctx.ids, index)
+    report.push(setFieldValue(el, index, value))
+  }
+  await waitForPageSettled(TYPE_SETTLE)
+  return withPageDelta(report.join('\n'), ctx)
+}
+
+function setFieldValue(el: Element, index: number, value: unknown): string {
+  if (el instanceof HTMLSelectElement) {
+    const wanted = (Array.isArray(value) ? value : [value]).map((entry) => String(entry).trim().toLowerCase())
+    let hit = 0
+    for (const option of el.options) {
+      const label = (option.label || option.textContent || '').trim().toLowerCase()
+      const matched = wanted.includes(label) || wanted.includes(option.value.trim().toLowerCase())
+      if (el.multiple) option.selected = matched
+      else if (matched && hit === 0) el.selectedIndex = option.index
+      if (matched) hit += 1
+    }
+    if (hit === 0) throw new ActionError('action-failed', `[${index}] has no option matching ${JSON.stringify(value)}. Options: ${[...el.options].map((option) => option.label || option.textContent).join(', ')}`)
+    el.dispatchEvent(new Event('input', { bubbles: true }))
+    el.dispatchEvent(new Event('change', { bubbles: true }))
+    return `[${index}] selected ${JSON.stringify(Array.isArray(value) ? value : String(value))}.`
+  }
+  if (el instanceof HTMLInputElement && (el.type === 'checkbox' || el.type === 'radio')) {
+    const checked = value === true || value === 'true' || value === 'on' || value === 1
+    if (el.checked !== checked) el.click()
+    if (el.checked !== checked) {
+      el.checked = checked
+      el.dispatchEvent(new Event('input', { bubbles: true }))
+      el.dispatchEvent(new Event('change', { bubbles: true }))
+    }
+    return `[${index}] ${checked ? 'checked' : 'unchecked'}.`
+  }
+  if (el instanceof HTMLInputElement && el.type === 'file') {
+    throw new ActionError('action-failed', `[${index}] is a file input; file upload is not supported by this tool.`)
+  }
+  if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
+    if (el.disabled || el.readOnly) throw new ActionError('action-failed', `[${index}] is ${el.disabled ? 'disabled' : 'read-only'}.`)
+    const text = value === null || value === undefined ? '' : String(value)
+    el.focus()
+    setNativeValue(el, text)
+    return `[${index}] set (${text.length} characters).`
+  }
+  if (isEditable(el)) {
+    typeIntoContentEditable(el, value === null || value === undefined ? '' : String(value), true)
+    return `[${index}] replaced editable content.`
+  }
+  throw new ActionError('action-failed', `[${index}] is not a form field (${el.tagName.toLowerCase()}).`)
+}
+
+const MAX_WAIT_FOR_MS = 60_000
+
+/**
+ * Wait until a condition holds: text present/absent, a selector present/absent,
+ * or the URL matching a substring/regex. Polls on DOM mutations and a timer.
+ */
+async function waitForAction(args: Record<string, unknown>, ctx: ActionContext): Promise<ActionResult> {
+  const text = typeof args.text === 'string' && args.text.trim() !== '' ? args.text.trim() : undefined
+  const selector = typeof args.selector === 'string' && args.selector.trim() !== '' ? args.selector.trim() : undefined
+  const url = typeof args.url === 'string' && args.url.trim() !== '' ? args.url.trim() : undefined
+  const gone = args.gone === true
+  if (text === undefined && selector === undefined && url === undefined) {
+    throw new ActionError('bad-args', 'Provide at least one of text, selector, or url.')
+  }
+  const requested = typeof args.timeoutMs === 'number' && args.timeoutMs > 0 ? args.timeoutMs : 10_000
+  const timeoutMs = Math.min(requested, MAX_WAIT_FOR_MS)
+  const check = (): boolean => {
+    const results: boolean[] = []
+    if (text !== undefined) {
+      const body = renderedText(document.body).toLowerCase()
+      results.push(body.includes(text.toLowerCase()))
+    }
+    if (selector !== undefined) {
+      try {
+        const el = deepQuerySelector(document, selector)
+        results.push(el !== null && el.getBoundingClientRect().width > 0)
+      } catch {
+        throw new ActionError('bad-args', `"${selector}" is not a valid CSS selector.`)
+      }
+    }
+    if (url !== undefined) {
+      let ok = location.href.includes(url)
+      if (!ok && url.length > 2 && url.startsWith('/') && url.lastIndexOf('/') > 0) {
+        try { ok = new RegExp(url.slice(1, url.lastIndexOf('/')), url.slice(url.lastIndexOf('/') + 1)).test(location.href) } catch { ok = false }
+      }
+      results.push(ok)
+    }
+    const present = results.every((result) => result)
+    return gone ? results.every((result) => !result) : present
+  }
+  const started = Date.now()
+  if (!check()) {
+    await new Promise<void>((resolve) => {
+      let done = false
+      const finish = (): void => {
+        if (done) return
+        done = true
+        observer.disconnect()
+        clearInterval(timer)
+        clearTimeout(deadline)
+        resolve()
+      }
+      const observer = new MutationObserver(() => { if (check()) finish() })
+      observer.observe(document.documentElement, { childList: true, subtree: true, characterData: true, attributes: true })
+      const timer = setInterval(() => { if (check()) finish() }, 250)
+      const deadline = setTimeout(finish, timeoutMs)
+    })
+  }
+  const elapsed = Date.now() - started
+  const what = [text !== undefined ? `text "${text}"` : '', selector !== undefined ? `selector "${selector}"` : '', url !== undefined ? `url "${url}"` : '']
+    .filter((part) => part !== '').join(', ')
+  if (!check()) {
+    throw new ActionError('action-failed', `Timed out after ${timeoutMs}ms waiting for ${what} to ${gone ? 'disappear' : 'appear'}.`)
+  }
+  await waitForPageSettled(TYPE_SETTLE)
+  return withPageDelta(`${what} ${gone ? 'disappeared' : 'appeared'} after ${elapsed}ms.`, ctx)
+}
+
+/** Viewport rectangles of the current inventory, for screenshot annotation. */
+function elementRectsAction(ctx: ActionContext): ActionResult {
+  const view = lastSnapshot ?? buildSnapshot(ctx.ids, { budget: ctx.budget }, null)
+  if (lastSnapshot === null) lastSnapshot = view
+  const rects = view.items
+    .filter((item) => item.rect !== undefined && item.inViewport)
+    .map((item) => ({ index: item.index, ...item.rect as { x: number; y: number; width: number; height: number } }))
+  return {
+    text: JSON.stringify({
+      rects,
+      viewport: { width: window.innerWidth, height: window.innerHeight, dpr: window.devicePixelRatio },
+      url: location.href,
+      title: document.title,
+    }),
+  }
 }
 
 function numberArg(args: Record<string, unknown>, name: string): number {

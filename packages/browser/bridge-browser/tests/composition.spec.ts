@@ -291,8 +291,9 @@ describe('real Loader composition', () => {
 
     const browserPrompt = (await ctx.systemPrompt.assemble()).sections
       .find((section) => section.name === 'tool:bridge-browser')?.text
-    expect(browserPrompt).toContain('page content you have not snapshotted')
-    expect(browserPrompt).toContain('Reuse that injected snapshot')
+    expect(browserPrompt).toContain('page content you have not read')
+    expect(browserPrompt).toContain('reuse that snapshot and its indices')
+    expect(browserPrompt).toContain('browser_screenshot')
     expect(browserPrompt).not.toMatch(/\p{Script=Han}/u)
 
     // Zero-config discovery endpoint answers with the bridge WebSocket URL.
@@ -309,7 +310,7 @@ describe('real Loader composition', () => {
     const client = await connectReady(port)
     expect(client.frames.find((f) => f.t === 'hello.ok')).toEqual({
       t: 'hello.ok',
-      caps: { textOnly: true, snapshotMaxChars: 32_000, maxInteractiveItems: 60 },
+      caps: { textOnly: true, snapshotMaxChars: 200_000, maxInteractiveItems: 400 },
     })
 
     // Gateway RPC round-trip against the real session store.

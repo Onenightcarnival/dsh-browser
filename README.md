@@ -16,7 +16,7 @@ This repository is a fork of [Lum1104/dsh-browser](https://github.com/Lum1104/ds
 
 Installation: [Install](#install). Desktop specifics: [Using with DeepSeek Harness Desktop](#using-with-deepseek-harness-desktop).
 
-Browser operation remains text-only: pages become structured text with a numbered inventory of interactive elements, and the model addresses those elements by number. dsh 0.1.5 multimodal chat is separate from that page channel—the side panel accepts PNG, JPEG, WebP, and GIF attachments when the host advertises image support, while browser tools still never capture screenshots.
+Browser operation is text-first with screenshots on demand: pages become a numbered inventory of interactive elements (piercing open shadow DOM and iframes, with select options and states), the model addresses elements by number, and `browser_screenshot` captures the viewport with those numbers drawn on the image so a multimodal model can pick targets visually. The tool set follows Claude in Chrome's shape: read page, find, screenshot, click/type/hover/batch form input, conditional wait, tab management. The side panel also accepts PNG, JPEG, WebP, and GIF attachments when the host advertises image support.
 
 > [!IMPORTANT]
 > The workspace pins dsh 0.1.5-rc.2, the minimum supported runtime. Older DSH releases are not supported.
@@ -75,17 +75,20 @@ The paired Playwright / extension duration ratio was **1.24** (95% CI **1.16–1
 
 | Capability | Tool | Notes |
 |---|---|---|
-| Read page | `browser_snapshot` | Structured text snapshot: title, URL, main text, numbered controls, and masked form fields; `delta: true` returns only changes |
-| Click element | `browser_click` | Click links, buttons, checkboxes, and other controls by inventory number |
-| Fill forms | `browser_type` | React/Vue-compatible input; `replace` clears the field first |
-| Press keys | `browser_press` | Keyboard events such as Enter, Tab, Escape, and arrow keys |
-| Scroll | `browser_scroll` | Viewport scrolling: up, down, top, and bottom |
+| Read page | `browser_snapshot` | Structured text snapshot: title, URL, main text, numbered controls (through shadow DOM, with select options, expanded/checked state, coordinates), and masked form fields; `region` to focus, `delta: true` for changes only; default budget 200k chars, 400 items |
+| Screenshot | `browser_screenshot` | Viewport PNG, by default with interactive elements labeled by their indices; delivered as an image block through dsh's attachment service (the model route must declare image input) |
+| Find elements | `browser_find` | Search by text, role, or selector (through shadow DOM); returns indices and center coordinates |
+| Click element | `browser_click` | Click by inventory number or viewport coordinates (x, y); double-click and right-click supported |
+| Fill forms | `browser_type` / `browser_form_input` | Type into one field (React/Vue-compatible; `replace` clears first), or set many at once: text, select by label or value, multi-select, checkbox/radio, contenteditable |
+| Hover | `browser_hover` | Hover an element to reveal menus, tooltips, or hidden controls |
+| Press keys | `browser_press` | Keyboard events such as Enter, Tab, Escape, and arrow keys, including combinations like `Ctrl+A` and `Shift+Tab` |
+| Scroll | `browser_scroll` | Viewport scrolling (up, down, top, bottom), or scroll an element into view by index |
 | Navigate | `browser_navigate` / `browser_open_tab` / `browser_back` / `browser_forward` / `browser_reload` | Navigation inside the controlled tab, or open a URL in a new tab and follow it (`active:false` keeps the current tab in front) |
 | List tabs | `browser_list_tabs` | List accessible tabs with stable IDs, titles, URLs, window/index metadata, and active/controlled state |
 | Follow tab | `browser_follow_tab` | Bind later browser tools to a tab returned by `browser_list_tabs` without activating it |
 | Close tab | `browser_close_tab` | Close a tab returned by `browser_list_tabs` |
 | Read region | `browser_get_text` | Lazy-loaded or partial page text |
-| Wait for stability | `browser_wait` | Page-load and render-settle detection |
+| Wait | `browser_wait` / `browser_wait_for` | Page settle detection; or wait for text, a selector, or a URL to appear or disappear, with a timeout |
 | Send images | `session.prompt` / `session.attachment` | Host-capability-gated image drafts, image-only prompts, and durable history previews |
 | Quote a selection | side panel composer | Text you highlight in the page appears in the composer and is sent with your next message as fenced, attributed page content |
 | Pick a model | model button next to the composer | Lists the providers and models configured in dsh (`session.modelCatalog`) and switches the current session's model and reasoning effort (`session.selectModel`); providers without credentials are greyed out. dsh also records the choice as the default for new sessions |
@@ -104,7 +107,7 @@ scripts/version.mjs
 ## Why this design
 
 - **Your real browser, not a headless copy**: the model works in the page you already have open, retaining logins, sessions, and cookies.
-- **A text-first page interface**: numbered controls, stable IDs across snapshots, delta updates, and masked sensitive values make pages operable without screenshots; user-attached chat images use dsh's separate multimodal message path.
+- **A text-first page interface with screenshots as a supplement**: numbered controls, stable IDs across snapshots, delta updates, and masked sensitive values make most pages operable without images; charts, canvases, and complex layouts get an annotated screenshot whose labels are the snapshot indices.
 - **Pointing instead of describing**: highlight the passage you mean and the side panel quotes it, so "explain this" needs no page tour. The quote is captured only while a panel is open, and nothing is sent until you send the message.
 - **A narrow privacy boundary**: passwords and payment-card values are always rendered as `••••` and never leave the page.
 - **A guarded bridge**: authenticated handshakes protect remote connections, privileged gateway methods reject non-loopback callers, and the extension binds tools to one user-controlled tab.
@@ -199,7 +202,7 @@ If you encounter `cache.hydratePrepared is not a function`, update the repositor
 - The bridge path sits outside the `/api` trust boundary and performs its own bearer-token authentication.
 - Local Chrome extension origins retain zero-configuration loopback access; Firefox origins are per-install UUIDs and must present the bearer token.
 - Privileged gateway methods such as `settings.*`, `credentials.*`, and `host.open*` reject non-loopback sources.
-- The browser-page pipeline is text-only and never captures screenshots; explicitly attached chat images use dsh's durable attachment service. Password and payment-card values never leave the page.
+- Password and payment-card values never leave the page through the text pipeline. Screenshots go through the same approval as page reads (and are blocked when page-content sharing is off), but password fields cannot be masked inside an image, so disable or decline screenshots on sensitive pages; captured images are saved through dsh's durable attachment service and handed to the model as image blocks.
 - When work begins, the assistant binds to the active tab (at prompt submission, or at the first direct browser-tool call). If you switch tabs manually, later browser actions pause and the side panel asks whether the assistant should continue on the original tab or follow the new one. Choosing the original tab permits background operation; the extension never silently retargets or changes your visible tab. Closing the controlled tab also pauses tools until you explicitly select the current page.
 - Text you highlight is captured only while a side panel is open and page sharing is not `off`, and never from password or payment-card fields. It stays inside the extension until you send the message, is dropped when you dismiss it or its page navigates or closes, and reaches the model inside the same untrusted-content boundary as page snapshots — including its source title and URL, which the page also controls.
 - Page-authored text is wrapped as untrusted input. The default `auto` mode reads only the controlled tab without an extra prompt; privacy-sensitive users can select `ask` for per-read confirmation or `off` to block reads entirely. In `ask` mode, the read dialog can allow one read or persistently switch back to `auto`; this can be reversed in Settings. Read page text is sent to the selected model.

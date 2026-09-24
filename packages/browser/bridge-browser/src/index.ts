@@ -65,7 +65,7 @@ export const inject = ['webServer', 'typertGateway', 'connection', 'tools', 'age
 const DEFAULT_TOOL_TIMEOUT_MS = 90_000
 
 /** Default cap on interactive inventory items per snapshot. */
-const DEFAULT_MAX_INTERACTIVE_ITEMS = 60
+const DEFAULT_MAX_INTERACTIVE_ITEMS = 400
 
 /** Default directory backing the browser extension's session group. */
 const DEFAULT_SESSION_WORKSPACE_PATH = dshHomePath('browser-sessions')
@@ -317,9 +317,12 @@ function mountBridge(
     ctx.effect(() => systemPrompt.section({
       name: 'tool:bridge-browser',
       order: 107,
-      text: 'A browser bridge may be connected. To read or operate the user\'s active browser page, call browser_snapshot '
-        + '(text-only; numbered items are the click/type targets), unless the current turn already includes a plugin-provided '
-        + 'followed-page browser_snapshot. Reuse that injected snapshot and its indices directly. Never assume page content you have not snapshotted.',
+      text: 'A browser bridge may be connected to the user\'s own Chrome. To read or operate the page, start with browser_snapshot '
+        + '(numbered items are the targets for click/type/form_input) unless the current turn already includes a plugin-provided '
+        + 'followed-page browser_snapshot; reuse that snapshot and its indices directly. Use browser_find to locate specific elements on '
+        + 'large pages, browser_screenshot when layout, images, charts, or canvases matter (labels on the image are snapshot indices), '
+        + 'browser_form_input to fill several fields at once, and browser_wait_for after actions that load content asynchronously. '
+        + 'Never assume page content you have not read.',
     }), 'bridge-browser: system prompt section')
   }
 

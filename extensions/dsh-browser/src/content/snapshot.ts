@@ -10,7 +10,7 @@
  * @module
  */
 
-import { accessibleName, collectInteractive, isInViewport, isVisible, mainText, pageText, truncate } from './extract.ts'
+import { accessibleName, collectInteractive, deepQuerySelector, isVisible, mainText, pageText, truncate } from './extract.ts'
 import { ElementIds } from './ids.ts'
 import { isSensitiveField, maskValue } from './privacy.ts'
 
@@ -34,16 +34,25 @@ function roleOf(el: Element): string {
 }
 
 /** One numbered interactive element. */
-interface InventoryItem {
+export interface InventoryItem {
   index: number
   role: string
   name: string
   disabled?: boolean
   checked?: boolean
   selected?: boolean
+  /** aria-expanded, for disclosure/menu/combobox triggers. */
+  expanded?: boolean
   href?: string
+  /** `<select>` choices (label, marked when selected); capped per element. */
+  options?: string[]
+  /** Viewport rectangle in CSS pixels, when the element has layout. */
+  rect?: { x: number; y: number; width: number; height: number }
   inViewport: boolean
 }
+
+/** Options listed per `<select>` before the rest is summarized by count. */
+const MAX_SELECT_OPTIONS = 40
 
 /** One numbered form field with its (masked) value. */
 interface FormFieldView {
@@ -187,11 +196,19 @@ export function buildSnapshot(ids: ElementIds, options: SnapshotOptions, last: S
   // Measure viewport and dialog membership once. Calling getBoundingClientRect
   // from a sort comparator forces repeated layout reads on large pages.
   const isOpenDialog = openDialogTest()
-  const elementViews = elements.map((element) => ({
-    element,
-    inViewport: isInViewport(element),
-    inDialog: openDialogOf(element, isOpenDialog) !== null,
-  }))
+  // One layout read per element serves both the viewport ordering and the
+  // rectangle reported for screenshots and coordinate targeting.
+  const elementViews = elements.map((element) => {
+    const box = element.getBoundingClientRect()
+    return {
+      element,
+      inViewport: box.bottom >= 0 && box.top <= window.innerHeight && box.right >= 0 && box.left <= window.innerWidth,
+      inDialog: openDialogOf(element, isOpenDialog) !== null,
+      rect: box.width > 0 && box.height > 0
+        ? { x: Math.round(box.left), y: Math.round(box.top), width: Math.round(box.width), height: Math.round(box.height) }
+        : undefined,
+    }
+  })
   const ordered = [...elementViews].sort((a, b) =>
     Number(b.inDialog) - Number(a.inDialog) || Number(b.inViewport) - Number(a.inViewport))
   const names = new Map<Element, string>()
@@ -205,7 +222,7 @@ export function buildSnapshot(ids: ElementIds, options: SnapshotOptions, last: S
   }
 
   const items: InventoryItem[] = []
-  for (const { element: el, inViewport } of ordered.slice(0, options.budget.maxItems)) {
+  for (const { element: el, inViewport, rect } of ordered.slice(0, options.budget.maxItems)) {
     const index = ids.indexOf(el)
     if (index === undefined) continue
     const item: InventoryItem = {
@@ -221,8 +238,16 @@ export function buildSnapshot(ids: ElementIds, options: SnapshotOptions, last: S
     }
     const ariaChecked = el.getAttribute('aria-checked')
     if (ariaChecked === 'true' || ariaChecked === 'false') item.checked = ariaChecked === 'true'
+    const ariaExpanded = el.getAttribute('aria-expanded')
+    if (ariaExpanded === 'true' || ariaExpanded === 'false') item.expanded = ariaExpanded === 'true'
     if (el instanceof HTMLOptionElement && el.selected) item.selected = true
     if (el instanceof HTMLAnchorElement && el.href !== '') item.href = hrefHeadline(el.href)
+    if (el instanceof HTMLSelectElement) {
+      if (el.disabled) item.disabled = true
+      item.options = selectOptions(el)
+    }
+    if (el instanceof HTMLTextAreaElement && el.disabled) item.disabled = true
+    if (rect !== undefined) item.rect = rect
     items.push(item)
   }
 
@@ -256,7 +281,7 @@ export function buildSnapshot(ids: ElementIds, options: SnapshotOptions, last: S
   }
 
   const regionEl = options.region !== undefined && options.region !== ''
-    ? document.querySelector(options.region)
+    ? deepQuerySelector(document, options.region)
     : null
   const mainSource = regionEl !== null ? pageText(regionEl) : mainText(document)
   const mainBudget = Math.floor(options.budget.maxChars * 0.5)
@@ -309,9 +334,22 @@ function selectedText(select: HTMLSelectElement): string {
   return [...select.selectedOptions].map((option) => option.textContent ?? '').join(', ')
 }
 
+/** `<select>` choices as the model should quote them back to browser_form_input. */
+function selectOptions(select: HTMLSelectElement): string[] {
+  const options = [...select.options]
+  const listed = options.slice(0, MAX_SELECT_OPTIONS).map((option) => {
+    const label = (option.label || option.textContent || option.value).replace(/\s+/g, ' ').trim()
+    return option.selected ? `${label} ✓` : label
+  })
+  if (options.length > MAX_SELECT_OPTIONS) listed.push(`… ${options.length - MAX_SELECT_OPTIONS} more`)
+  return listed
+}
+
 function sameItem(a: InventoryItem, b: InventoryItem): boolean {
   return a.role === b.role && a.name === b.name && a.href === b.href
-    && a.disabled === b.disabled && a.checked === b.checked && a.inViewport === b.inViewport
+    && a.disabled === b.disabled && a.checked === b.checked && a.expanded === b.expanded
+    && a.inViewport === b.inViewport
+    && (a.options?.join('\u0000') ?? '') === (b.options?.join('\u0000') ?? '')
 }
 
 function sameForm(a: FormFieldView, b: FormFieldView): boolean {
@@ -337,11 +375,15 @@ function renderItem(item: InventoryItem): string {
   const state = [
     item.disabled === true ? 'disabled' : undefined,
     item.checked === undefined ? undefined : item.checked ? 'checked' : 'unchecked',
+    item.expanded === undefined ? undefined : item.expanded ? 'expanded' : 'collapsed',
     item.inViewport ? undefined : 'outside viewport',
   ].filter((value) => value !== undefined).join('/')
   const stateText = state === '' ? '' : ` [${state}]`
   const hrefText = item.href !== undefined ? ` → ${item.href}` : ''
-  return `  [${item.index}] ${item.role} "${item.name}"${stateText}${hrefText}`
+  const optionsText = item.options !== undefined && item.options.length > 0
+    ? ` options: ${item.options.map((option) => JSON.stringify(option)).join(', ')}`
+    : ''
+  return `  [${item.index}] ${item.role} "${item.name}"${stateText}${hrefText}${optionsText}`
 }
 
 function renderForm(form: FormFieldView, includeIdentity: boolean): string {

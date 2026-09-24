@@ -409,7 +409,7 @@ describe('dispatchToolCall', () => {
       type: 'DSH_ACTION',
       action: 'browser_click',
       args: { index: 3 },
-      budget: expect.objectContaining({ maxItems: 60 }),
+      budget: expect.objectContaining({ maxItems: 400 }),
       includePageDelta: true,
     }, { documentId: 'child-doc' })
   })

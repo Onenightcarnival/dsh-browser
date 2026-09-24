@@ -34,10 +34,13 @@ export const PING_INTERVAL_MS = 30_000
 export const DEFAULT_TOKEN_BYTES = 32
 
 /** Default rendered-snapshot character budget. */
-export const DEFAULT_SNAPSHOT_MAX_CHARS = 32_000
+export const DEFAULT_SNAPSHOT_MAX_CHARS = 200_000
 
 /** Smallest snapshot budget that can carry both trust boundaries and page text. */
 export const MIN_SNAPSHOT_MAX_CHARS = 500
+
+/** Default cap on interactive inventory items per snapshot. */
+export const DEFAULT_MAX_INTERACTIVE_ITEMS = 400
 
 /** Error codes a tool call may settle with. Open set: consumers must tolerate unknown codes. */
 export type ToolErrorCode =

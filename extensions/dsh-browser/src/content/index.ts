@@ -17,7 +17,7 @@ import { SelectionWatcher } from './selection.ts'
 import type { SnapshotBudget } from './snapshot.ts'
 
 /** Negotiated snapshot budgets, patched in from the background via message. */
-let budget: SnapshotBudget = { maxItems: 60, maxForms: 30, maxChars: DEFAULT_SNAPSHOT_MAX_CHARS }
+let budget: SnapshotBudget = { maxItems: 400, maxForms: 200, maxChars: DEFAULT_SNAPSHOT_MAX_CHARS }
 
 const ids = new ElementIds()
 
@@ -71,6 +71,10 @@ function onMessage(message: unknown, _sender: chrome.runtime.MessageSender, send
   const action = actionMsg.action ?? ''
   const args = actionMsg.args ?? {}
   const actionBudget = actionMsg.budget === undefined ? budget : { ...budget, ...actionMsg.budget }
+  // The background negotiates items and chars only; keep forms in proportion.
+  if (actionMsg.budget?.maxItems !== undefined && actionMsg.budget.maxForms === undefined) {
+    actionBudget.maxForms = Math.max(30, Math.ceil(actionMsg.budget.maxItems / 2))
+  }
   void runAction(action, args, {
     ids,
     budget: actionBudget,

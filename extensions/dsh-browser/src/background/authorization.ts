@@ -5,17 +5,29 @@ import type { TabFrame } from './frames.ts'
 import type { ApprovalPrompt } from '../security/approval.ts'
 import { getUiLocale, type UiLocale } from '../i18n.ts'
 
-const PAGE_READS = new Set(['browser_snapshot', 'browser_get_text'])
+const PAGE_READS = new Set(['browser_snapshot', 'browser_get_text', 'browser_find', 'browser_wait_for', 'browser_screenshot'])
 const STATE_CHANGING_ACTIONS = new Set([
   'browser_click',
   'browser_type',
   'browser_press',
+  'browser_hover',
+  'browser_form_input',
   'browser_navigate',
   'browser_open_tab',
   'browser_back',
   'browser_forward',
   'browser_reload',
 ])
+
+function readSummary(name: string, locale: UiLocale): string {
+  switch (name) {
+    case 'browser_snapshot': return localized(locale, 'Read the current page and accessible iframes', '读取当前页面及可访问 iframe')
+    case 'browser_find': return localized(locale, 'Search the current page for elements', '在当前页面查找元素')
+    case 'browser_wait_for': return localized(locale, 'Watch the current page until a condition is met', '监视当前页面直到条件满足')
+    case 'browser_screenshot': return localized(locale, 'Capture a screenshot of the visible page (passwords are not masked in images)', '截取当前可见页面的截图（截图中的密码不会被打码）')
+    default: return localized(locale, 'Read text from the specified area of the current page', '读取当前页面的指定文本区域')
+  }
+}
 
 /** Return an approval prompt, or undefined when this call needs no prompt. */
 export function approvalPromptForCall(
@@ -26,15 +38,13 @@ export function approvalPromptForCall(
 ): ApprovalPrompt | undefined {
   if (PAGE_READS.has(call.name)) {
     if (sharePageContent !== 'ask') return undefined
-    const targetFrames = call.name === 'browser_snapshot'
+    const targetFrames = call.name === 'browser_snapshot' || call.name === 'browser_screenshot'
       ? frames
       : frames.filter((frame) => frame.frameId === requestedFrame(call.args))
     return {
       kind: 'read',
       action: call.name,
-      summary: call.name === 'browser_snapshot'
-        ? localized(locale, 'Read the current page and accessible iframes', '读取当前页面及可访问 iframe')
-        : localized(locale, 'Read text from the specified area of the current page', '读取当前页面的指定文本区域'),
+      summary: readSummary(call.name, locale),
       origins: uniqueOrigins(targetFrames, frames),
       canTrust: false,
     }
@@ -119,6 +129,15 @@ function summarizeAction(call: ToolCall, locale: UiLocale): string {
         locale,
         `Enter ${length} characters in element [${index}]${frame} (the text is not shown in this dialog)`,
         `向元素 [${index}] 输入 ${length} 个字符${frame}（文本内容不会显示在确认框）`,
+      )
+    }
+    case 'browser_hover': return localized(locale, `Hover over element [${index}]${frame}`, `悬停在元素 [${index}] 上${frame}`)
+    case 'browser_form_input': {
+      const count = Array.isArray(call.args.fields) ? call.args.fields.length : 0
+      return localized(
+        locale,
+        `Fill ${count} form field${count === 1 ? '' : 's'}${frame} (values are not shown in this dialog)`,
+        `填写 ${count} 个表单字段${frame}（内容不会显示在确认框）`,
       )
     }
     case 'browser_press': return localized(

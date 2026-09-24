@@ -68,8 +68,18 @@ function clean(text: string): string {
  * @returns the element's text.
  */
 function elementText(el: Element): string {
-  if (el instanceof HTMLElement && typeof el.innerText === 'string') return el.innerText
-  return el.textContent ?? ''
+  const own = el instanceof HTMLElement && typeof el.innerText === 'string' ? el.innerText : el.textContent ?? ''
+  // innerText stops at shadow boundaries; append the text of open shadow
+  // trees beneath this element so component-rendered prose is not lost.
+  const shadowText: string[] = []
+  for (const host of shadowHosts(el)) {
+    const root = host.shadowRoot as ShadowRoot
+    for (const child of root.children) shadowText.push(elementText(child))
+  }
+  if (el.shadowRoot !== null) {
+    for (const child of el.shadowRoot.children) shadowText.push(elementText(child))
+  }
+  return shadowText.length === 0 ? own : `${own}\n${shadowText.join('\n')}`
 }
 
 /**
@@ -114,8 +124,15 @@ export function accessibleName(el: Element): string {
     }
   }
 
-  const ownText = el instanceof HTMLInputElement ? '' : el.textContent
+  // A select's text content is its option list, which is data rather than a
+  // name; fall through to its name/id like an input does.
+  const ownText = el instanceof HTMLInputElement || el instanceof HTMLSelectElement ? '' : el.textContent
   if (ownText !== undefined && ownText.trim() !== '') return truncate(clean(ownText), MAX_ITEM_NAME_CHARS).text
+
+  if (el instanceof HTMLSelectElement) {
+    const hint = el.getAttribute('name') ?? el.id
+    return truncate(clean(hint !== null && hint !== '' ? hint : 'select'), MAX_ITEM_NAME_CHARS).text
+  }
 
   if (el instanceof HTMLInputElement) {
     // Button-like inputs carry their label in `value`; other inputs never use
@@ -146,12 +163,72 @@ function cssEscape(value: string): string {
 export function collectInteractive(root: Document | Element): Element[] {
   const seen = new Set<Element>()
   const result: Element[] = []
-  for (const el of root.querySelectorAll(INTERACTIVE_SELECTOR)) {
+  for (const el of deepQuerySelectorAll(root, INTERACTIVE_SELECTOR)) {
     if (seen.has(el)) continue
     seen.add(el)
     if (isVisible(el)) result.push(el)
   }
   return result
+}
+
+/**
+ * `querySelectorAll` that also descends into open shadow roots, in composed
+ * document order. Web-component sites (YouTube, Lit/Stencil apps, many admin
+ * consoles) keep their buttons and fields inside shadow trees, which the plain
+ * query never sees. Closed shadow roots stay opaque.
+ * @param root - document, element, or shadow root to scan.
+ * @param selector - CSS selector applied within each tree.
+ * @returns matches from the light tree and every open shadow tree beneath it.
+ */
+export function deepQuerySelectorAll(root: Document | Element | ShadowRoot, selector: string): Element[] {
+  const result: Element[] = []
+  const visit = (scope: Document | Element | ShadowRoot): void => {
+    for (const el of scope.querySelectorAll(selector)) result.push(el)
+    for (const host of shadowHosts(scope)) visit(host.shadowRoot as ShadowRoot)
+  }
+  visit(root)
+  if (root instanceof Element && root.matches(selector)) result.unshift(root)
+  return result
+}
+
+/** Elements in a tree that own an open shadow root, in document order. */
+function shadowHosts(scope: Document | Element | ShadowRoot): Element[] {
+  const hosts: Element[] = []
+  const walker = (scope.ownerDocument ?? (scope as Document)).createTreeWalker(scope, NodeFilter.SHOW_ELEMENT)
+  let node = walker.nextNode()
+  while (node !== null) {
+    if ((node as Element).shadowRoot !== null) hosts.push(node as Element)
+    node = walker.nextNode()
+  }
+  return hosts
+}
+
+/**
+ * First match of `selector` including open shadow trees, for region and
+ * selector arguments the model supplies.
+ * @param root - scope to search.
+ * @param selector - CSS selector.
+ * @returns the first composed-order match, or null.
+ */
+export function deepQuerySelector(root: Document | Element | ShadowRoot, selector: string): Element | null {
+  return deepQuerySelectorAll(root, selector)[0] ?? null
+}
+
+/**
+ * Bounding box of an element in CSS pixels of the viewport, or null when it
+ * has no layout. Used for screenshot annotation and coordinate fallbacks.
+ * @param el - element.
+ * @returns integer-rounded viewport rectangle.
+ */
+export function viewportRect(el: Element): { x: number; y: number; width: number; height: number } | null {
+  const rect = el.getBoundingClientRect()
+  if (rect.width <= 0 || rect.height <= 0) return null
+  return {
+    x: Math.round(rect.left),
+    y: Math.round(rect.top),
+    width: Math.round(rect.width),
+    height: Math.round(rect.height),
+  }
 }
 
 /**
@@ -163,7 +240,7 @@ export function collectInteractive(root: Document | Element): Element[] {
  * @returns the cleaned main text (unbounded; callers apply budgets).
  */
 export function mainText(doc: Document): string {
-  const main = doc.querySelector('main, [role="main"]')
+  const main = deepQuerySelector(doc, 'main, [role="main"]')
   if (main !== null) return clean(elementText(main))
   const articles = doc.querySelectorAll('article')
   if (articles.length === 1) return clean(elementText(articles[0]!))

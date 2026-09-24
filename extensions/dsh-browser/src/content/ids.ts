@@ -19,6 +19,7 @@ const ID_ATTRIBUTE = 'data-dsh-el'
 export class ElementIds {
   private readonly idByElement = new WeakMap<Element, number>()
   private readonly elementById = new Map<number, Element>()
+  private readonly pinned = new Set<Element>()
   private nextId = 1
 
   /**
@@ -31,6 +32,12 @@ export class ElementIds {
     const seen = new Set(elements)
     let removed = 0
     for (const [id, el] of this.elementById) {
+      // Elements addressed through find() stay valid while they remain in the
+      // document, even though they are not part of the interactive inventory.
+      if (this.pinned.has(el)) {
+        if (el.isConnected) continue
+        this.pinned.delete(el)
+      }
       if (!seen.has(el)) {
         this.elementById.delete(id)
         this.idByElement.delete(el)
@@ -56,6 +63,23 @@ export class ElementIds {
    * @param el - element.
    * @returns the assigned id, or undefined when not inventoried.
    */
+  /**
+   * Give ids to elements that are not inventoried yet (find results, text
+   * hits) without touching the existing registry.
+   * @param elements - elements to make addressable.
+   */
+  ensure(elements: Element[]): void {
+    for (const el of elements) {
+      if (this.idByElement.has(el)) continue
+      this.pinned.add(el)
+      const id = this.nextId
+      this.nextId += 1
+      this.idByElement.set(el, id)
+      this.elementById.set(id, el)
+      el.setAttribute(ID_ATTRIBUTE, String(id))
+    }
+  }
+
   indexOf(el: Element): number | undefined {
     return this.idByElement.get(el)
   }

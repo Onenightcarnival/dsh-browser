@@ -11,6 +11,7 @@
 
 import type { BridgeCaps, ClientFrame, ServerFrame } from '@onenightcarnival/dsh-bridge-browser/src/protocol.ts'
 import {
+  DEFAULT_MAX_INTERACTIVE_ITEMS,
   DEFAULT_SNAPSHOT_MAX_CHARS,
   isServerFrame,
   parseBridgeFrame,
@@ -152,7 +153,7 @@ export class BridgeClient {
       socket.send(JSON.stringify({
         t: 'hello',
         token: this.token,
-        caps: { textOnly: true, snapshotMaxChars: DEFAULT_SNAPSHOT_MAX_CHARS, maxInteractiveItems: 60 },
+        caps: { textOnly: true, snapshotMaxChars: DEFAULT_SNAPSHOT_MAX_CHARS, maxInteractiveItems: DEFAULT_MAX_INTERACTIVE_ITEMS },
       } satisfies ClientFrame))
 
       let authed = false

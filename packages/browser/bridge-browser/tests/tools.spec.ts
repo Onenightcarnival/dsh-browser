@@ -149,8 +149,31 @@ describe('registerBrowserTools', () => {
       properties: Record<string, unknown>
       required?: string[]
     }
+    // Click targets by inventory index or by viewport coordinates, so neither is required on its own.
     expect(click.properties.index).toBeDefined()
-    expect(click.required).toContain('index')
+    expect(click.properties.x).toBeDefined()
+    expect(click.properties.y).toBeDefined()
+    expect(click.required ?? []).not.toContain('index')
+    const type = registered.find(({ name }) => name === 'browser_type')!.definition.parameters as { required?: string[] }
+    expect(type.required).toEqual(expect.arrayContaining(['index', 'text']))
+    const formInput = registered.find(({ name }) => name === 'browser_form_input')!.definition.parameters as {
+      properties: Record<string, { type?: string; items?: { properties?: Record<string, unknown> } }>
+      required?: string[]
+    }
+    expect(formInput.properties.fields?.type).toBe('array')
+    expect(formInput.properties.fields?.items?.properties?.index).toBeDefined()
+    expect(formInput.required).toContain('fields')
+  })
+
+  it('registers the Claude-in-Chrome-shaped catalog', () => {
+    const { ctx, bridge, registered } = makeHarness()
+    registerBrowserTools(ctx, bridge, { toolTimeoutMs: 1_000, snapshotMaxChars: 12_000, maxInteractiveItems: 60 })
+    const names = registered.map(({ name }) => name)
+    for (const expected of ['browser_snapshot', 'browser_screenshot', 'browser_find', 'browser_form_input', 'browser_hover', 'browser_wait_for']) {
+      expect(names).toContain(expected)
+    }
+    const screenshot = registered.find(({ name }) => name === 'browser_screenshot')!.definition
+    expect(typeof screenshot.finalizeContent).toBe('function')
   })
 
   it('declares cooperative timeoutMs on every tool', () => {
@@ -171,11 +194,15 @@ describe('registerBrowserTools', () => {
     }
   })
 
-  it('keeps model-facing tool descriptions concise', () => {
+  it('keeps model-facing tool descriptions bounded', () => {
     const { ctx, bridge, registered } = makeHarness()
     registerBrowserTools(ctx, bridge, { toolTimeoutMs: 5_000, snapshotMaxChars: 12_000, maxInteractiveItems: 60 })
-    const descriptionChars = registered.reduce((sum, { definition }) => sum + String(definition.description).length, 0)
-    expect(descriptionChars).toBeLessThan(1_500)
+    // Descriptions carry usage guidance (when to prefer find over snapshot,
+    // how coordinates relate to screenshots); the budget is per tool, not a
+    // catalog-wide squeeze, since the target models have large contexts.
+    for (const { name, definition } of registered) {
+      expect(String(definition.description).length, name).toBeLessThan(600)
+    }
   })
 
   it('exposes optional frame routing on frame-local tools only', () => {

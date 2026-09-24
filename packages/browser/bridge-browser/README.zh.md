@@ -2,7 +2,7 @@
 
 [English](README.md) | 中文
 
-dsh 的**浏览器操作桥**：在宿主 webserver 上挂载一个 **token 认证的 WebSocket 通道**（`/ext/bridge`），供 Chrome 扩展连接；把扩展调用投影到 dsh 0.1.5 Typert Remotes、按连接跟随 Session 与 Remote Event 流，并注册**纯文本**的 `browser_*` 工具集——经扩展在真实浏览器中读取页面、点击元素、填写表单、滚动与导航，登录态保留。侧边栏是对话入口，工具才是产品本体。
+dsh 的**浏览器操作桥**：在宿主 webserver 上挂载一个 **token 认证的 WebSocket 通道**（`/ext/bridge`），供 Chrome 扩展连接；把扩展调用投影到 dsh 0.1.5 Typert Remotes、按连接跟随 Session 与 Remote Event 流，并注册 `browser_*` 工具集（结构化文本为主，`browser_screenshot` 返回标注截图）——经扩展在真实浏览器中读取页面、点击元素、填写表单、滚动与导航，登录态保留。侧边栏是对话入口，工具才是产品本体。
 
 **纯文本浏览器工具，多模态对话透传**：页面快照仍是结构化文本（标题、正文、带编号的交互清单、敏感值打码的表单字段），所有浏览器动作按稳定编号寻址。通用 RPC 通道也会透传 dsh 0.1.5 的图片消息和持久附件读取；延迟创建的新会话只在宿主确实挂载附件服务时声明图片限制。
 
@@ -12,8 +12,8 @@ dsh 的**浏览器操作桥**：在宿主 webserver 上挂载一个 **token 认�
 |---|---|---|---|
 | `token` | `string` | 自动生成 | 固定 bearer token。缺省时首次启动生成，写入 `~/.dsh/ext-bridge-token`（0600）并打印在启动日志。 |
 | `toolTimeoutMs` | `number` | 90000 | 单次工具调用预算，为扩展的 60 秒审批窗口预留时间。 |
-| `snapshotMaxChars` | `number` | 32000 | 单次快照渲染字符上限，最小为 500（经 `hello.ok` caps 协商给扩展）。 |
-| `maxInteractiveItems` | `number` | 60 | 单次快照交互清单条数上限。 |
+| `snapshotMaxChars` | `number` | 200000 | 单次快照渲染字符上限，最小为 500（经 `hello.ok` caps 协商给扩展）。 |
+| `maxInteractiveItems` | `number` | 400 | 单次快照交互清单条数上限。 |
 | `sessionWorkspacePath` | `string` | `~/.dsh/browser-sessions` | 扩展创建的会话所用的专用 Host Workspace。插件会在首次调用未显式指定工作区的 `session.create` 时创建并幂等注册该目录；会话的 cwd 随之变为此路径，因此 GUI 会显示 `browser-sessions` 工作区分组。设为 `""` 可让会话继续显示在“未分组”中。 |
 | `deferSessionCreate` | `boolean` | `true` | 会话只在第一条消息时才真正创建：`session.create` 先返回一个内存暂定 ID（不落库），历史读取为空，第一次 `session.prompt` 才创建真实会话（同一 ID、回放原始创建参数）。只打开面板不说话，会在会话库/GUI 里不留任何痕迹。 |
 | `discoveryPort` | `number` | 43189 | 发现信标：只回 `/ext/bridge-config` 的回环监听，返回本实例的桥地址，供随机端口启动的宿主（DeepSeek Harness Desktop）使用。端口被占时顺延后三个端口；`0` 关闭。 |
