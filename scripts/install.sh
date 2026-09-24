@@ -320,13 +320,13 @@ require_command rsync "未找到 rsync；请先安装 rsync。" "rsync was not f
 
 print_step 1 "构建浏览器桥" "Build the browser bridge"
 (cd "$ROOT" && pnpm install --frozen-lockfile >/dev/null 2>&1)
-(cd "$ROOT" && pnpm --filter @yuxianglin/dsh-bridge-browser run build >/dev/null 2>&1)
+(cd "$ROOT" && pnpm --filter @onenightcarnival/dsh-bridge-browser run build >/dev/null 2>&1)
 
 print_step 2 "注册到本机 web profile" "Register with the local web profile"
 if profile_has_dependency "$WEB_PROFILE_MANIFEST" "$LEGACY_PLUGIN"; then
   (cd "$ROOT" && pnpm exec dsh plugin --profile web remove "$LEGACY_PLUGIN" >/dev/null)
 fi
-(cd "$ROOT" && pnpm exec dsh plugin --profile web add -w "@yuxianglin/dsh-bridge-browser@link:$PLUGIN" >/dev/null)
+(cd "$ROOT" && pnpm exec dsh plugin --profile web add -w "@onenightcarnival/dsh-bridge-browser@link:$PLUGIN" >/dev/null)
 
 print_step 3 "构建 Chrome 扩展" "Build the Chrome extension"
 (cd "$ROOT" && pnpm --filter dsh-browser-extension run build >/dev/null 2>&1)

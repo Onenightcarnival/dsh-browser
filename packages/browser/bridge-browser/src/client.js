@@ -1,11 +1,11 @@
 /**
- * Browser half of `@yuxianglin/dsh-bridge-browser`.
+ * Browser half of `@onenightcarnival/dsh-bridge-browser`.
  *
  * When the host plugin is active, this client registers a General-settings row
  * that shows the pasteable bridge WebSocket URL for the Chrome extension.
  */
 window.__ModuleLoader__.load({
-  id: '@yuxianglin/dsh-bridge-browser',
+  id: '@onenightcarnival/dsh-bridge-browser',
   factory: (require) => {
     const module = { exports: {} }
     const React = require('react')
@@ -13,7 +13,7 @@ window.__ModuleLoader__.load({
     const BRIDGE_PATH = '/ext/bridge'
     const BRIDGE_CONFIG_PATH = '/ext/bridge-config'
     const LOCALE_NS = 'bridge-browser'
-    const STYLE_ID = '@yuxianglin/dsh-bridge-browser/BridgeAddressRow'
+    const STYLE_ID = '@onenightcarnival/dsh-bridge-browser/BridgeAddressRow'
     const inject = ['slots', 'locale']
 
     const dictionaries = {
@@ -66,7 +66,7 @@ window.__ModuleLoader__.load({
         return () => {}
       }
       const style = document.createElement('style')
-      style.dataset.plugin = '@yuxianglin/dsh-bridge-browser'
+      style.dataset.plugin = '@onenightcarnival/dsh-bridge-browser'
       style.dataset.pluginCss = STYLE_ID
       style.textContent = [
         '.dshBridgeAddressRow{border-bottom:1px solid var(--dsw-alias-border-l2);display:flex;flex-direction:column;gap:8px;padding:16px 0}',

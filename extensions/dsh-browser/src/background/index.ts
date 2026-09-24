@@ -37,9 +37,9 @@ import {
   isRespondResult,
   type BridgeCaps,
   type RespondResult,
-} from '@yuxianglin/dsh-bridge-browser/src/protocol.ts'
-import type { ServerFrame } from '@yuxianglin/dsh-bridge-browser/src/protocol.ts'
-import { BRIDGE_CONFIG_PATH, BRIDGE_PATH } from '@yuxianglin/dsh-bridge-browser/src/protocol.ts'
+} from '@onenightcarnival/dsh-bridge-browser/src/protocol.ts'
+import type { ServerFrame } from '@onenightcarnival/dsh-bridge-browser/src/protocol.ts'
+import { BRIDGE_CONFIG_PATH, BRIDGE_PATH } from '@onenightcarnival/dsh-bridge-browser/src/protocol.ts'
 import { BridgeClient, type BridgeState } from './bridge.ts'
 import { createRpc } from './rpc.ts'
 import {

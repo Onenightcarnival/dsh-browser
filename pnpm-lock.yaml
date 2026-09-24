@@ -138,7 +138,7 @@ importers:
       '@vitejs/plugin-react':
         specifier: ^4.3.1
         version: 4.7.0(vite@6.4.3(@types/node@22.20.1)(yaml@2.9.0))
-      '@yuxianglin/dsh-bridge-browser':
+      '@onenightcarnival/dsh-bridge-browser':
         specifier: workspace:^
         version: link:../../packages/browser/bridge-browser
       jsdom:

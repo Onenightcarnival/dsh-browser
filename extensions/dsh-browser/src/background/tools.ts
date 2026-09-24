@@ -8,8 +8,8 @@
  * @module
  */
 
-import { DEFAULT_SNAPSHOT_MAX_CHARS } from '@yuxianglin/dsh-bridge-browser/src/protocol.ts'
-import type { ToolError } from '@yuxianglin/dsh-bridge-browser/src/protocol.ts'
+import { DEFAULT_SNAPSHOT_MAX_CHARS } from '@onenightcarnival/dsh-bridge-browser/src/protocol.ts'
+import type { ToolError } from '@onenightcarnival/dsh-bridge-browser/src/protocol.ts'
 import {
   allocateFrameBudgets,
   frameDocumentKey,

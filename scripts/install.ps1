@@ -31,7 +31,7 @@ $ManagedRoot = Join-Path $DshHomeDir 'dsh-browser'
 $ManagedMarker = Join-Path $ManagedRoot '.managed-by-install-sh'
 $ArchiveUrl = "https://github.com/$Repository/archive/refs/heads/$RemoteRef.zip"
 $LegacyPlugin = '@deepseek-ai/dsh-bridge-browser'
-$BridgePlugin = '@yuxianglin/dsh-bridge-browser'
+$BridgePlugin = '@onenightcarnival/dsh-bridge-browser'
 
 function Write-Step {
   param([int]$Number, [string]$Zh, [string]$En)

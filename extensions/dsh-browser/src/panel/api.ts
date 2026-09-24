@@ -5,8 +5,8 @@
  * @module
  */
 
-import type { BridgeCaps, RespondResult } from '@yuxianglin/dsh-bridge-browser/src/protocol.ts'
-import type { ServerFrame } from '@yuxianglin/dsh-bridge-browser/src/protocol.ts'
+import type { BridgeCaps, RespondResult } from '@onenightcarnival/dsh-bridge-browser/src/protocol.ts'
+import type { ServerFrame } from '@onenightcarnival/dsh-bridge-browser/src/protocol.ts'
 import type { BridgeState } from '../background/bridge.ts'
 import type { Settings } from '../background/index.ts'
 import type { TabAffinityDecision, TabAffinityState } from '../background/tab-affinity.ts'

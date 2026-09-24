@@ -1,7 +1,7 @@
 /**
  * Resolve the browser-extension bridge WebSocket URL from the current page
  * location or a discovery response. Shared by the settings row and tests.
- * @module @yuxianglin/dsh-bridge-browser/src/bridge-url
+ * @module @onenightcarnival/dsh-bridge-browser/src/bridge-url
  */
 
 import { BRIDGE_CONFIG_PATH, BRIDGE_PATH } from './protocol.ts'

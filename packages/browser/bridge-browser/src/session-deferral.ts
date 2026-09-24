@@ -9,7 +9,7 @@
  * the first `session.prompt` for that id. Abandoned provisional ids are
  * pruned after {@link PROVISIONAL_TTL_MS}.
  *
- * @module @yuxianglin/dsh-bridge-browser/src/session-deferral
+ * @module @onenightcarnival/dsh-bridge-browser/src/session-deferral
  */
 
 import type { ImageAttachmentLimits } from '@deepseek-ai/dsh-attachment'

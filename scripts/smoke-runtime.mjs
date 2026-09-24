@@ -168,7 +168,7 @@ try {
   await mkdir(home, { recursive: true })
   await mkdir(legacyDirectory, { recursive: true })
   await writeFile(legacyFile, legacyBytes)
-  await command(['plugin', '--profile', 'web', 'add', '-w', `@yuxianglin/dsh-bridge-browser@link:${bridge}`])
+  await command(['plugin', '--profile', 'web', 'add', '-w', `@onenightcarnival/dsh-bridge-browser@link:${bridge}`])
   let rpc = await start(false)
   const created = await rpc('session.create', { sessionId, cwd: temp })
   assert.equal(created.sessionId, sessionId)
