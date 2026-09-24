@@ -68,8 +68,10 @@ const tgz = readdirSync(OUT_DIR).find(name => name.endsWith('.tgz'))
 if (tgz === undefined) throw new Error('package-desktop: pnpm pack produced no tarball')
 
 // 2. Chrome extension zip.
-const manifest = JSON.parse(readFileSync(extensionManifest, 'utf8'))
-const zipName = `dsh-browser-extension-chrome-${manifest.version}.zip`
+// Name by the extension package version (may carry a prerelease label the
+// Chrome manifest cannot), so the zip and the tgz share one version string.
+const extensionPackage = JSON.parse(readFileSync(join(EXTENSION_DIR, 'package.json'), 'utf8'))
+const zipName = `dsh-browser-extension-chrome-${extensionPackage.version}.zip`
 zipDirectory(join(EXTENSION_DIR, 'dist'), join(OUT_DIR, zipName))
 
 // 3. Checksums.

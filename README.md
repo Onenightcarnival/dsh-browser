@@ -40,7 +40,7 @@ When the installer opens `chrome://extensions`, follow its instructions to load 
 
 The desktop app runs the dsh server on a random port, which the extension's fixed-port probe cannot find. This fork's bridge plugin therefore opens a loopback-only discovery beacon that serves nothing but `/ext/bridge-config` (default `127.0.0.1:43189`, falling back through 43192 when taken; `discoveryPort: 0` disables it) and reports the real bridge URL. The desktop app itself needs no change.
 
-1. Download `onenightcarnival-dsh-bridge-browser-<version>.tgz` and `dsh-browser-extension-chrome-<version>.zip` from [Releases](https://github.com/Onenightcarnival/dsh-browser/releases), or build them from a checkout with `pnpm install && pnpm run build && pnpm run package:desktop` (output in `dist-desktop/`).
+1. Download `onenightcarnival-dsh-bridge-browser-<version>.tgz` and `dsh-browser-extension-chrome-<version>.zip` from [Releases](https://github.com/Onenightcarnival/dsh-browser/releases) (pushing a `vX.Y.Z` tag runs `.github/workflows/release.yml`, which builds both and attaches them to the Release; the version comes from the tag), or build them from a checkout with `pnpm install && pnpm run build && pnpm run package:desktop` (output in `dist-desktop/`).
 2. In the desktop app open 插件 → 配置中心… → 插件, click 「从 .tgz 安装」 and pick the `.tgz`. The app runs `dsh plugin --profile web add file:<path>`, which installs the plugin's dependencies (`ws`) and registers its `dsh.bundle` composition layer. Restart the app when prompted.
 3. Unzip the extension into a folder you will keep, open `chrome://extensions`, enable Developer mode and choose "Load unpacked" on that folder.
 4. Open any page and click the DeepSeek whale icon; the side panel should show **Connected**. Sessions created from the extension land in the `~/.dsh/browser-sessions` workspace and also appear in the desktop app's session list.
@@ -192,7 +192,7 @@ Notes:
 - The bridge build copies its browser client with Node.js `copyFileSync`, so the same package script works without a Unix `cp` executable.
 - The dependencies of `@deepseek-ai/dsh` and the bridge plugin are pinned to the same tested public release line. An upgrade must update the manifests and lockfile together and rerun the root checks.
 
-`check:runtime` checks the resolved DSH dependencies and lockfile; `test:smoke` starts the real web host in a temporary DSH home and verifies the bridge and session reads after a restart, without model credentials. CI runs these checks after a clean installation.
+`check:runtime` checks the resolved DSH dependencies and lockfile; `test:smoke` starts the real web host in a temporary DSH home and verifies the bridge and session reads after a restart, without model credentials. These checks run locally; the release workflow only typechecks, builds and packages.
 
 If you encounter `cache.hydratePrepared is not a function`, update the repository, rerun `pnpm install --frozen-lockfile` and `pnpm run build`, then restart `pnpm start`. Session data and the global package cache can be kept.
 

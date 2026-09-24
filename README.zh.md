@@ -40,7 +40,7 @@ $s="$env:TEMP\dsh-install.ps1"; irm https://raw.githubusercontent.com/Onenightca
 
 桌面版把 dsh 服务跑在随机端口上，扩展靠固定端口找不到它。本分支的桥插件在启动时另开一个只回 `/ext/bridge-config` 的回环信标（默认 `127.0.0.1:43189`，被占时顺延到 43192，配置 `discoveryPort: 0` 关闭），把真实的桥地址告诉扩展，桌面版代码不需要任何改动。
 
-1. 到 [Releases](https://github.com/Onenightcarnival/dsh-browser/releases) 下载 `onenightcarnival-dsh-bridge-browser-<版本>.tgz` 和 `dsh-browser-extension-chrome-<版本>.zip`。也可以在源码 checkout 里 `pnpm install && pnpm run build && pnpm run package:desktop`，产物在 `dist-desktop/`。
+1. 到 [Releases](https://github.com/Onenightcarnival/dsh-browser/releases) 下载 `onenightcarnival-dsh-bridge-browser-<版本>.tgz` 和 `dsh-browser-extension-chrome-<版本>.zip`（推送 `vX.Y.Z` 标签即触发 `.github/workflows/release.yml` 自动构建并挂到 Release，版本号以标签为准）。也可以在源码 checkout 里 `pnpm install && pnpm run build && pnpm run package:desktop`，产物在 `dist-desktop/`。
 2. 打开桌面版菜单「插件 → 配置中心… → 插件」，点「从 .tgz 安装」，选中下载的 `.tgz`。桌面版会执行 `dsh plugin --profile web add file:<路径>`，安装 `ws` 等依赖并注册桥插件的 `dsh.bundle` 组合层。按提示重启桌面版。
 3. 把 zip 解压到一个不会删的目录，打开 `chrome://extensions`，开启「开发者模式」，点「加载已解压的扩展程序」选中该目录。
 4. 打开任意网页，点击 DeepSeek 鲸鱼图标打开侧边栏，等待显示**已连接**。扩展创建的会话默认落在 `~/.dsh/browser-sessions` 工作区，也会出现在桌面版的会话列表里。
@@ -192,7 +192,7 @@ pnpm --filter dsh-browser-extension run test
 - 桥构建使用 Node.js `copyFileSync` 复制浏览器客户端，因此同一条包脚本不依赖 Unix `cp` 命令。
 - `@deepseek-ai/dsh` 与桥接插件的依赖固定在同一条经过验证的公开发布线上；升级时必须同时更新 manifest、锁文件并重跑根目录检查。
 
-`check:runtime` 检查实际解析的 DSH 依赖和锁文件；`test:smoke` 使用临时 DSH home 启动真实 web 宿主，验证桥接和重启后的会话读取，无需模型密钥。CI 在干净安装后运行这些检查。
+`check:runtime` 检查实际解析的 DSH 依赖和锁文件；`test:smoke` 使用临时 DSH home 启动真实 web 宿主，验证桥接和重启后的会话读取，无需模型密钥。这些检查在本地运行；发布流水线只做 typecheck、构建与打包。
 
 如果遇到 `cache.hydratePrepared is not a function`，更新仓库后重新运行 `pnpm install --frozen-lockfile` 和 `pnpm run build`，再重启 `pnpm start`。无需删除会话数据或清空全局缓存。
 

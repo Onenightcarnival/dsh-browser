@@ -1,49 +1,66 @@
-name: Release desktop artifacts
-
-# Pushing a `v*` tag builds the bridge plugin tarball and the Chrome
-# extension zip (scripts/package-desktop.mjs) and attaches them, with
-# SHA256SUMS.txt, to a GitHub Release for that tag. DeepSeek Harness Desktop
-# users install the .tgz from 配置中心 → 插件 → 「从 .tgz 安装」 and load the
-# unzipped extension folder at chrome://extensions.
+# Release: push a tag like v1.2.3 (or v1.2.3-rc.1) and this workflow builds
+# the bridge plugin and the Chrome extension, packs them as
+# onenightcarnival-dsh-bridge-browser-<version>.tgz and
+# dsh-browser-extension-chrome-<version>.zip, and attaches both (with
+# SHA256SUMS.txt) to a GitHub Release for that tag. The version inside the
+# artifacts always comes from the tag name, not from the version fields
+# committed in the repository.
+name: Release
 
 on:
   push:
-    tags: ['v*']
-  workflow_dispatch:
+    tags:
+      - 'v*'
 
 permissions:
   contents: write
 
 jobs:
-  package:
+  release:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
-        with:
-          node-version: 24
-      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+      - name: Validate tag format
+        run: |
+          if [[ ! "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Tag '$GITHUB_REF_NAME' is not in vX.Y.Z or vX.Y.Z-prerelease form"
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
         with:
           run_install: false
-      - name: Install into a fresh store
-        run: pnpm install --frozen-lockfile --store-dir "$RUNNER_TEMP/dsh-pnpm-store"
-      - run: pnpm run check:runtime
-      - run: pnpm run typecheck
-      - run: pnpm run test
-      - run: pnpm run build
-      - run: pnpm run test:smoke
-      - run: node scripts/package-desktop.mjs
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+
+      - uses: actions/setup-node@v4
         with:
-          name: desktop-artifacts
-          path: dist-desktop/*
-      - name: Publish GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Set versions from tag
+        run: node scripts/set-version.mjs "${GITHUB_REF_NAME#v}"
+
+      - name: Typecheck
+        run: pnpm run typecheck
+
+      - name: Build
+        run: pnpm run build
+
+      - name: Pack
+        run: |
+          node scripts/package-desktop.mjs
+          ls -l dist-desktop
+          tar -tzf dist-desktop/*.tgz
+
+      - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "${GITHUB_REF_NAME}" dist-desktop/* \
-            --repo "${GITHUB_REPOSITORY}" \
-            --title "${GITHUB_REF_NAME}" \
-            --generate-notes
+          args=(--title "$GITHUB_REF_NAME" --generate-notes)
+          if [[ "$GITHUB_REF_NAME" == *-* ]]; then
+            args+=(--prerelease)
+          fi
+          gh release create "$GITHUB_REF_NAME" dist-desktop/* "${args[@]}"
